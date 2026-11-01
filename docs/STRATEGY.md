@@ -59,6 +59,10 @@ track record has a lower confidence bound above zero, and only with the playbook
 ## 3. Mechanics
 
 ### 3.1 Landing model (`ucore/src/fill.rs`)
+Solana slots are ~211 ms as of Nov 2026 (`lab check` measures it; `ucore::pump::SLOT_MS`).
+All time-based settings are written in seconds and converted with that constant, while
+the landing model itself is in slots, like your measurements.
+
 * With p = 7/15 we land in the trigger slot after `k` more trades of the coin
   (k ∈ {2,3,4,5,6,8,10,13}, median 4), or at slot end if fewer trades happen.
 * Otherwise we land in the next slot, behind `j ∈ {0,1,2,4}` trades of the coin (usually first).

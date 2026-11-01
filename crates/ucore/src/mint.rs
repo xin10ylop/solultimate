@@ -121,8 +121,11 @@ pub struct MintTracker {
     pub max_buy_lamports: u64,
 }
 
-/// P-window horizons in slots (≈ 2s, 5s, 10s, 30s, 60s, 3m, 10m).
-pub const PWIN_SLOTS: [u64; 7] = [5, 12, 25, 75, 150, 450, 1500];
+/// P-window horizons: 2s, 5s, 10s, 30s, 60s, 3m, 10m (in slots).
+pub const PWIN_SLOTS: [u64; 7] = {
+    use crate::pump::secs;
+    [secs(2), secs(5), secs(10), secs(30), secs(60), secs(180), secs(600)]
+};
 
 impl MintTracker {
     pub fn new(c: &Create) -> MintTracker {

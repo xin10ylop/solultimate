@@ -55,7 +55,7 @@ impl Default for GateCfg {
             recent_k: 4,
             min_recent_mean: 0.0,
             max_consec_losses: 4,
-            lookback_slots: 7 * 216_000,
+            lookback_slots: 7 * crate::pump::SLOTS_PER_DAY,
             default_variant: 3,
             first_candle_mult: 1.35,
         }
@@ -259,7 +259,7 @@ impl Default for OperatorBook {
             funders: FxHashMap::default(),
             insider_index: FxHashMap::default(),
             hub_min_fresh: 40.0,
-            funding_ttl_slots: 216_000,
+            funding_ttl_slots: crate::pump::SLOTS_PER_DAY,
             last_prune: 0,
             static_hubs: Default::default(),
         }
@@ -334,7 +334,7 @@ impl OperatorBook {
         }
         let dt = slot.saturating_sub(f.last_decay);
         if dt > 9_000 {
-            f.fresh *= 0.5f64.powf(dt as f64 / 216_000.0);
+            f.fresh *= 0.5f64.powf(dt as f64 / crate::pump::SLOTS_PER_DAY as f64);
             f.last_decay = slot;
         }
         f.fresh += 1.0;
@@ -343,7 +343,7 @@ impl OperatorBook {
             self.last_prune = slot;
             let ttl = self.funding_ttl_slots;
             self.funding.retain(|_, r| slot.saturating_sub(r.slot) <= ttl);
-            self.funders.retain(|_, f| f.fresh > 0.05 || slot.saturating_sub(f.last_decay) < 216_000);
+            self.funders.retain(|_, f| f.fresh > 0.05 || slot.saturating_sub(f.last_decay) < crate::pump::SLOTS_PER_DAY);
         }
     }
 

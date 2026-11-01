@@ -45,6 +45,15 @@ pub const IX_BUY_EXACT_QUOTE_IN_V3: [u8; 8] = [225, 247, 80, 30, 213, 179, 132, 
 pub const IX_BUY_V3: [u8; 8] = [7, 5, 29, 196, 245, 23, 101, 80];
 pub const IX_SELL_V3: [u8; 8] = [28, 146, 222, 119, 38, 196, 105, 213];
 
+/// Observed mainnet slot duration (Nov 2026: ~211 ms). `lab check` prints the measured value;
+/// update this if the network changes its slot time again.
+pub const SLOT_MS: u64 = 211;
+/// Seconds → slots.
+pub const fn secs(s: u64) -> u64 {
+    s * 1000 / SLOT_MS
+}
+pub const SLOTS_PER_DAY: u64 = secs(86_400);
+
 pub const INITIAL_VIRTUAL_SOL: u64 = 30_000_000_000;
 pub const INITIAL_VIRTUAL_TOKEN: u64 = 1_073_000_000_000_000;
 pub const INITIAL_REAL_TOKEN: u64 = 793_100_000_000_000;

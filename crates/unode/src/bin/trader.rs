@@ -71,7 +71,7 @@ fn d_lag() -> u64 {
     1500
 }
 fn d_expire() -> u64 {
-    10
+    20
 }
 fn d_journal() -> PathBuf {
     PathBuf::from("data/journal.jsonl")

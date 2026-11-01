@@ -14,7 +14,7 @@ warmup_data = ["data/live"]
 kill_file = "STOP"                   # `touch STOP` → sell everything, no new entries, exit when flat
 max_wallet_lamports = 3_000_000_000  # refuse to start live if the hot wallet holds more (blast radius)
 max_stream_lag_ms = 1500             # no new entries while the feed is stale
-expire_slots = 10                    # buy not seen after N slots → treated as failed (late fills are sold)
+expire_slots = 20                    # buy not seen after N slots (~4 s) → treated as failed (late fills are sold)
 journal = "data/journal.jsonl"
 
 # Nozomi tip accounts are used round-robin; override here if Temporal publishes new ones.
@@ -44,7 +44,7 @@ max_stake_frac = 0.05
 max_open = 2
 daily_loss_limit_lamports = 300_000_000
 max_consec_losses = 5
-pause_slots_after_streak = 27_000    # ~3 h
+pause_slots_after_streak = 51_000    # ~3 h at ~211 ms/slot
 allow_mayhem = false
 default_max_entry_mcap = 80.0
 

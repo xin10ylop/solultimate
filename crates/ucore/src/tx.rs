@@ -103,7 +103,7 @@ impl Default for DecodeCfg {
             fund_min_lamports: 5_000_000,           // 0.005 SOL
             fund_max_lamports: 2_000_000_000_000,   // 2000 SOL
             watch: FxHashSet::default(),
-            active_mint_slots: 9_000, // ~1h
+            active_mint_slots: crate::pump::secs(3600),
         }
     }
 }

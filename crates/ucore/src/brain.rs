@@ -43,7 +43,7 @@ impl Default for RiskCfg {
             max_open: 3,
             daily_loss_limit_lamports: 500_000_000,
             max_consec_losses: 5,
-            pause_slots_after_streak: 9_000 * 3,
+            pause_slots_after_streak: crate::pump::secs(3 * 3600),
             allow_mayhem: false,
             default_max_entry_mcap: 80.0,
         }
@@ -93,7 +93,7 @@ impl Default for BrainCfg {
             sell_slip: 0.25,
             dump_sell_slip: 0.6,
             risk: RiskCfg::default(),
-            resolve_slots: 1500,
+            resolve_slots: crate::pump::secs(600),
             late_attr_slots: 0,
             variants: default_variants(),
             seed: 7,
@@ -581,7 +581,7 @@ impl Brain {
         // lifecycle entry triggers (only while the launch is still learning)
         if s.dev_sell || s.big_sell || s.consolidation || s.nonbuyer_sell || s.operator_sell {
             if let Some(l) = self.launches.get_mut(&t.mint) {
-                if !l.learned && t.m.slot <= create_slot + 300 {
+                if !l.learned && t.m.slot <= create_slot + crate::pump::secs(120) {
                     if s.dev_sell && !l.devsell_done {
                         l.devsell_done = true;
                         self.pending_decisions.push((t.mint, t.m.slot, t.m.tx_idx, Stage::DevSell));
@@ -731,7 +731,7 @@ impl Brain {
             let Some(mt) = self.mints.get(mint) else { continue };
             let age = mt.age_slots(b.slot);
             let open = self.by_mint.get(mint).map(|v| !v.is_empty()).unwrap_or(false);
-            if !l.learned && !l.shadows.is_empty() && !open && age >= 300 {
+            if !l.learned && !l.shadows.is_empty() && !open && age >= crate::pump::secs(120) {
                 learn.push(*mint);
             }
             if age >= self.cfg.resolve_slots && !open {

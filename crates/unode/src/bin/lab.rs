@@ -98,6 +98,7 @@ fn check(data: PathBuf) -> Result<()> {
     let mut last: FxHashMap<Pk, Curve> = FxHashMap::default();
     let (mut blocks, mut trades, mut creates, mut ok, mut bad, mut unknown, mut funds, mut xfers) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     let (mut first_slot, mut last_slot, mut prev_slot, mut gaps) = (u64::MAX, 0u64, 0u64, 0u64);
+    let (mut bt_first, mut bt_last) = (i64::MAX, 0i64);
     let mut by_ix: FxHashMap<u8, u64> = FxHashMap::default();
     let mut mayhem = 0u64;
     let mut examples = Vec::new();
@@ -111,6 +112,10 @@ fn check(data: PathBuf) -> Result<()> {
             match e {
                 Ev::Block(b) => {
                     blocks += 1;
+                    if b.block_time > 0 {
+                        bt_first = bt_first.min(b.block_time);
+                        bt_last = bt_last.max(b.block_time);
+                    }
                     first_slot = first_slot.min(b.slot);
                     last_slot = last_slot.max(b.slot);
                     if prev_slot != 0 && b.slot > prev_slot + 1 {
@@ -170,6 +175,10 @@ fn check(data: PathBuf) -> Result<()> {
         }
     }
     println!("slots {first_slot}..{last_slot} blocks {blocks} missing_slots {gaps} (skipped by leaders or fetch failures)");
+    if bt_last > bt_first && last_slot > first_slot {
+        let ms = (bt_last - bt_first) as f64 * 1000.0 / (last_slot - first_slot) as f64;
+        println!("measured slot time {ms:.0} ms (ucore::pump::SLOT_MS = {}){}", ucore::pump::SLOT_MS, if (ms - ucore::pump::SLOT_MS as f64).abs() > 30.0 { "  <-- update SLOT_MS" } else { "" });
+    }
     println!("creates {creates} (mayhem {mayhem}) trades {trades} fundings {funds} token_xfers {xfers}");
     println!("curve continuity on known mints: ok {ok} mismatch {bad} ({:.4}%) first-seen {unknown}", 100.0 * bad as f64 / (ok + bad).max(1) as f64);
     let mut ix: Vec<_> = by_ix.into_iter().collect();
@@ -555,7 +564,7 @@ fn write_operators(path: &PathBuf, brain: &mut Brain, names: &[String]) -> Resul
         let famt: Vec<f64> = rs.iter().filter(|r| Some(r.fund_from.as_str()) == top.as_ref().map(|t| t.0.as_str())).map(|r| r.fund_sol).collect();
         let fmin = famt.iter().cloned().fold(f64::INFINITY, f64::min);
         let fmax = famt.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let fage = med(rs.iter().filter(|r| r.fund_age_slots >= 0).map(|r| r.fund_age_slots as f64 * 0.4).collect());
+        let fage = med(rs.iter().filter(|r| r.fund_age_slots >= 0).map(|r| r.fund_age_slots as f64 * ucore::pump::SLOT_MS as f64 / 1000.0).collect());
         let hon = agg(rs.iter().map(|r| r.honest).collect());
         let mut best = (0usize, f64::NEG_INFINITY, 0.0);
         for v in 0..names.len() {
