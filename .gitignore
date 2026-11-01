@@ -1,0 +1,7 @@
+/target
+/data
+*.keypair.json
+*.key
+.env
+/reports/tmp
+/reports/dev
