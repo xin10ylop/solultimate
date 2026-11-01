@@ -1124,7 +1124,7 @@ fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
     let mut tw = BufWriter::new(fs::File::create(out.join("trades.bin"))?);
     let mut cw = BufWriter::new(fs::File::create(out.join("creates.bin"))?);
     let mut kw = BufWriter::new(fs::File::create(out.join("completes.bin"))?);
-    // pools.bin rows (88 bytes): kind u8, pad u8, ev u16, slot u32, tx u32, pool u32, mint u32 (u32::MAX unknown),
+    // pools.bin rows (92 bytes, quote mint id u32 appended): kind u8, pad u8, ev u16, slot u32, tx u32, pool u32, mint u32 (u32::MAX unknown),
     // user u32, signer u32, fee_bps u32, base u64, quote u64, base_res u64, quote_res u64, vq i64, fee u64, extra u64
     let mut pw = BufWriter::new(fs::File::create(out.join("pools.bin"))?);
     let mut np = 0u64;
@@ -1189,6 +1189,8 @@ fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
                     pw.write_all(&e.vq.to_le_bytes())?;
                     pw.write_all(&e.fee.to_le_bytes())?;
                     pw.write_all(&e.extra.to_le_bytes())?;
+                    let q = if e.quote_mint == Pk::default() { u32::MAX } else { id(&mut mints, &mut mint_list, e.quote_mint) };
+                    pw.write_all(&q.to_le_bytes())?;
                     np += 1;
                 }
                 Ev::Complete(c) => {
