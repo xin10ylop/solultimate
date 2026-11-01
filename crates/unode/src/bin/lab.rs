@@ -102,6 +102,12 @@ enum Cmd {
         /// Use the dense exit grid instead of the default exit styles.
         #[arg(long)]
         exit_grid: bool,
+        /// Use the launch-structure exit set (dump reactions).
+        #[arg(long)]
+        exit_lse: bool,
+        /// More sensitive dump detectors (any create-slot wallet selling ≥ 0.05 SOL).
+        #[arg(long)]
+        dump_sensitive: bool,
     },
     Replay {
         #[arg(long)]
@@ -142,7 +148,7 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
         Cmd::Compare { journal } => compare(journal),
-        Cmd::Signals { data, out, stake, stress, only, exit_grid } => signals(data, out, stake, stress, only, exit_grid),
+        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive } => signals(data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
             let txt = fs::read_to_string(features)?;
@@ -857,12 +863,23 @@ fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, exit_grid: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, exit_grid: bool, exit_lse: bool, dump_sensitive: bool) -> Result<()> {
     use ucore::siglab::SigLab;
     let mut lab = SigLab::new(stake, LatencyModel::stressed(stress));
     lab.only = only.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
     if exit_grid {
         lab.exits = ucore::siglab::exit_grid();
+    }
+    if exit_lse {
+        lab.exits = ucore::siglab::exit_grid_lse();
+    }
+    if dump_sensitive {
+        lab.dump.insider_min_lamports = 50_000_000;
+        lab.dump.insider_min_frac_rsol = 0.01;
+        lab.dump.big_sell_min_lamports = 300_000_000;
+        lab.dump.big_sell_frac_rsol = 0.06;
+        lab.dump.consolidation_frac_supply = 0.05;
     }
     let exits: Vec<String> = lab.exits.iter().map(|e| e.name.clone()).collect();
     let mut w = std::io::BufWriter::new(fs::File::create(&out)?);

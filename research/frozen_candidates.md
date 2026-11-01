@@ -24,3 +24,14 @@ of the holdout.
 
 Entry price limit: +100% over the decision price. Discovery (data/pilot, 25.6 h): 793 trades,
 +3.9%/trade (halves +3.9% / +3.7%), 19/26 hours positive, 310 operators, +7.7 SOL at 0.25 SOL.
+
+## E: D + anti-farm (frozen before the holdout)
+
+Same members and exits as D, plus:
+* skip coins whose operator already has > 20 launches (FOMO's "farming": serial operators
+  learn to dump on snipers; on discovery these had a 23% catastrophic-loss rate and ~0 mean);
+* bundle-based members (run-mode, big bundle, fresh bundle) need ≥ 12 create-slot buyers
+  (professional bundles; smaller ones carried no edge).
+
+Discovery: 416 trades, +7.5%/trade (median +8.6%), 58% wins, halves +7.3% / +9.5%,
+17/23 hours positive, 55 operators, +7.76 SOL at 0.25 SOL.

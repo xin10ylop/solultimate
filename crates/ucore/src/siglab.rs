@@ -60,6 +60,33 @@ pub fn signal_names() -> Vec<String> {
     v
 }
 
+/// Exit set for the launch-structure family: hold/trail × dump reaction × SL × hold time.
+pub fn exit_grid_lse() -> Vec<ExitRules> {
+    let mut v = Vec::new();
+    for (tag, trail) in [("hold", None), ("trail", Some((0.20, 0.10))), ("trail15", Some((0.15, 0.08)))] {
+        for (dtag, dump) in [("off", DumpMode::Off), ("hard", DumpMode::Hard), ("all", DumpMode::All)] {
+            for sl in [-0.10, -0.15] {
+                for hold in [8u64, 15] {
+                    v.push(ExitRules {
+                        name: format!("lse_{tag}_{dtag}_sl{}_h{hold}", -sl),
+                        entry: Entry::Create,
+                        tp: vec![],
+                        sl,
+                        sl_arm_slots: 0,
+                        trail,
+                        max_hold_slots: secs(hold),
+                        idle_slots: secs(15),
+                        on_dump: dump,
+                        dump_clock_q: None,
+                        progress_exit: None,
+                    });
+                }
+            }
+        }
+    }
+    v
+}
+
 /// Dense exit grid for focused studies: TP × SL × trailing × max hold.
 pub fn exit_grid() -> Vec<ExitRules> {
     let mut v = Vec::new();
