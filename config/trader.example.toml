@@ -39,7 +39,20 @@ real_trading = true
 operator_entries = false             # identity-based plays rotate; research only
 context_entries = false
 
-# Primary engine: identity-free order-flow model (enable only after RUNBOOK §2 passes)
+# Launch-Structure Engine (best family so far; regime-dependent; NOT validated out of sample).
+# Enable only in paper mode until it passes the per-day test in RUNBOOK §2.
+[brain.structure]
+enabled = false
+max_op_prior = 20          # anti-farm: skip operators with many earlier launches
+min_bundle_buyers = 12     # professional bundles only
+entry_slip = 1.0           # max adverse price increase vs trigger (1.0 = up to 2×)
+create_entry_slip = 2.0
+exit_hold_s = 15
+exit_sl = -0.15
+exit_trail_act = 0.20
+exit_trail_give = 0.10
+
+# Order-flow model (research; enable only after RUNBOOK §2 passes)
 [brain.flow]
 enabled = false
 model_path = "research/models/flow.json"

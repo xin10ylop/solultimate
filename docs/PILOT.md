@@ -51,3 +51,52 @@ threshold chosen on training data; ≤ 3 open trades; one trade per coin). Repro
    Price impact is simulated, so the lab shows the trade-off.
 4. **New regime.** Post-migration PumpSwap trading is not decoded yet. It is a different
    market with different participants.
+
+---
+
+# Round 2: signal lab, holdout and forward test
+
+**Data.** Three separate periods, ~45 h in total:
+
+| period | span | role |
+|---|---|---|
+| `data/pilot2` | 15.8 h, Oct 30 20:45 → Oct 31 12:33 UTC | holdout |
+| `data/pilot` | 25.6 h, Oct 31 12:34 → Nov 1 14:10 | discovery |
+| `data/forward` | 4 h, Nov 1 14:10 → 18:10 | forward |
+
+**Method.** `lab signals` ran 23 entry mechanisms plus a 144-cell "run-mode" grid, with up to
+120 exit styles, under the measured landing model. The mechanisms came from the videos
+(run-mode bundle ≥ 55% supply, fresh-wallet bundles, dev-sell re-pump, dip-buy, snipe delay +
+min market cap, dev team buys instead of the dev, operator quality / sprayer logic) and from
+pump.fun mechanics and crowd behaviour (graduation sprint, 50% milestone, sniper exhaustion,
+re-pump, KOL-style clusters, whale impulse, unique-buyer surge, quiet accumulation, organic
+holders). Candidates were frozen in `research/frozen_candidates.md` before each test.
+
+**Discovery.** Launch-structure signals (an operator's bundle holding a large share of supply
+in freshly funded wallets, entered for ≤ 15 s) looked strong:
+
+* E: +8.3%/trade, 58% wins, both halves positive, robust to a full slot of extra latency;
+* the market-flow signals were negative under every exit.
+
+**Live-realism decomposition.** These knobs come from the previous live system: 3.5M
+lamports priority per attempt on both legs, 3–8 slot late sells, and the copy-trade entry
+premium. Each costs E 2–3 points on its own. Only the premium kills it, and in our simulator
+that premium is largely already present as real tape trades ahead of us.
+
+**Holdout: rejected.** E −0.2%/trade, D −4.1%/trade. In the same UTC hours, E was +7.5% on
+the discovery day and −0.2% on the holdout day. The edge was day-specific.
+
+**Positive on both days under realistic live conditions.** 18 of 1,269 pairs, one coherent
+family: strict run-mode with a 5 s hold, +1.3% … +2.0%/trade (F).
+
+**Forward: rejected.** F −1.4%/trade (20 trades), and the whole family −1.4%.
+
+**Regime gate.** Trade only while the family's trailing shadow PnL is positive. This turns
+D-realistic from −6.0 SOL into −0.2 … −1.8 SOL. It protects capital, but under realistic
+conditions it is still not profitable on 45 h.
+
+**Conclusion.** The launch-structure family is real but regime-dependent: some operators
+run that playbook on some days. Nothing passed out of sample under realistic live conditions
+in 45 h. The deciding inputs are the 30-day recording (many regimes, enough days for a
+"profitable on ≥ 70% of days" test) and real landing measurements from paper/canary in place
+of the copy-trade proxy.

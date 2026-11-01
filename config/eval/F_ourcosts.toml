@@ -1,0 +1,31 @@
+[structure]
+enabled = true
+op_quality = false
+b0_runmode = false
+big_bundle = false
+fresh_bundle = false
+g0_runmode = true
+g0_supply = 0.5
+g0_fresh = 0.7
+g0_window_s = 7200
+g0_min_n = 2
+max_op_prior = 0
+min_bundle_buyers = 0
+exit_hold_s = 5
+exit_sl = -0.25
+exit_trail_act = 0.0
+[risk]
+bankroll_lamports = 100_000_000_000
+stake_lamports = 250_000_000
+max_stake_frac = 0.05
+max_open = 6
+daily_loss_limit_lamports = 100_000_000_000
+max_consec_losses = 1_000_000
+[costs]
+base_fee = 5000
+buy_cu_limit = 120000
+buy_cu_price = 3000000
+buy_tip = 1000000
+sell_cu_limit = 100000
+sell_cu_price = 35000000
+sell_tip = 1000000

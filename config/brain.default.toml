@@ -23,6 +23,39 @@ min_progress = 0.3
 max_progress = 0.97
 eval_every_s = 1
 
+[structure]
+enabled = false
+op_quality = true
+op_min_resolved = 3
+op_min_frac_2x = 0.5
+g0_runmode = true
+g0_supply = 0.5
+g0_fresh = 0.5
+g0_window_s = 21600
+g0_min_n = 2
+b0_runmode = true
+b0_supply = 0.3
+b0_fresh = 0.5
+b0_window_s = 7200
+b0_min_n = 2
+big_bundle = true
+big_bundle_sol = 5.0
+big_bundle_max_nonfresh = 1
+fresh_bundle = true
+fresh_bundle_frac = 0.6
+fresh_bundle_min_n = 3
+fresh_window_s = 7200
+entry_slip = 1.0
+create_entry_slip = 2.0
+exit_hold_s = 15
+exit_sl = -0.15
+exit_trail_act = 0.2
+exit_trail_give = 0.1
+create_exit_hold_s = 15
+create_exit_sl = -0.15
+max_op_prior = 20
+min_bundle_buyers = 12
+
 [gate]
 min_n = 6
 min_lcb = 0.03
@@ -113,6 +146,8 @@ next_slot_ahead = [
 ],
 ]
 extra_slots = 0
+entry_penalty = []
+sell_delay = []
 
 [costs]
 base_fee = 5000

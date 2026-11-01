@@ -299,21 +299,23 @@ impl Brain {
         let n_shadow = cfg.variants.len();
         let mut cfg = cfg;
         // LSE exits are appended after the shadow variants (never shadowed per stage)
-        let lse = |name: &str, trail: Option<(f64, f64)>| ExitRules {
+        let sc = cfg.structure.clone();
+        let lse = |name: &str, trail: Option<(f64, f64)>, hold: u64, sl: f64| ExitRules {
             name: name.into(),
             entry: Entry::Flow,
             tp: vec![],
-            sl: -0.15,
+            sl,
             sl_arm_slots: 0,
             trail,
-            max_hold_slots: crate::pump::secs(15),
+            max_hold_slots: crate::pump::secs(hold),
             idle_slots: crate::pump::secs(15),
             on_dump: crate::policy::DumpMode::Off,
             dump_clock_q: None,
             progress_exit: None,
         };
-        cfg.variants.push(lse("lse_hold15", None));
-        cfg.variants.push(lse("lse_trail15", Some((0.20, 0.10))));
+        cfg.variants.push(lse("lse_create", None, sc.create_exit_hold_s, sc.create_exit_sl));
+        let tr = if sc.exit_trail_act > 0.0 { Some((sc.exit_trail_act, sc.exit_trail_give)) } else { None };
+        cfg.variants.push(lse("lse_bundle", tr, sc.exit_hold_s, sc.exit_sl));
         let lse_hold = cfg.variants.len() - 2;
         let lse_trail = cfg.variants.len() - 1;
         Brain {

@@ -38,6 +38,14 @@ pub struct StructureCfg {
     pub entry_slip: f64,
     /// Same for create-tx entries (the operator's bundle lands ahead of us: ~+165% typical).
     pub create_entry_slip: f64,
+    /// Exit for bundle-end / first-candle members: hold seconds, stop loss, trailing (0 = off).
+    pub exit_hold_s: u64,
+    pub exit_sl: f64,
+    pub exit_trail_act: f64,
+    pub exit_trail_give: f64,
+    /// Exit for create-tx (operator quality) entries.
+    pub create_exit_hold_s: u64,
+    pub create_exit_sl: f64,
     /// Anti-farm: skip operators with more than this many earlier launches (0 = off).
     pub max_op_prior: u32,
     /// Bundle-based members need at least this many create-slot buyers (0 = off).
@@ -70,6 +78,12 @@ impl Default for StructureCfg {
             fresh_window_s: 7_200,
             entry_slip: 1.0,
             create_entry_slip: 2.0,
+            exit_hold_s: 15,
+            exit_sl: -0.15,
+            exit_trail_act: 0.20,
+            exit_trail_give: 0.10,
+            create_exit_hold_s: 15,
+            create_exit_sl: -0.15,
             max_op_prior: 20,
             min_bundle_buyers: 12,
         }
