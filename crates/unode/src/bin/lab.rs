@@ -68,6 +68,16 @@ enum Cmd {
         #[arg(long, default_value_t = u64::MAX)]
         to_slot: u64,
     },
+    /// Inventory of protocol mechanics in the data: quote coins, fee tiers, holder rewards, instruction mix.
+    Mechanics {
+        #[arg(long)]
+        data: Vec<PathBuf>,
+    },
+    /// Continuity check of the child-coin (pump-coin / USDC quoted) reconstruction.
+    ChildCheck {
+        #[arg(long)]
+        data: PathBuf,
+    },
     /// Study mayhem-mode coins: who trades them, fees, and reserve changes between trades.
     Mayhem {
         #[arg(long)]
@@ -120,6 +130,9 @@ enum Cmd {
         /// Long-hold exit set.
         #[arg(long)]
         exit_long: bool,
+        /// Market: 0 SOL-quoted, 1 children (pump-coin / USDC quoted), 2 both.
+        #[arg(long, default_value_t = 0)]
+        market: u8,
     },
     Replay {
         #[arg(long)]
@@ -169,7 +182,9 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
         Cmd::Compare { journal } => compare(journal),
-        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long), dump_sensitive, penalty, create_slip, live_real),
+        Cmd::Mechanics { data } => mechanics(data),
+        Cmd::ChildCheck { data } => child_check(data),
+        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long, market } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long), dump_sensitive, penalty, create_slip, live_real, market),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
             let txt = fs::read_to_string(features)?;
@@ -895,7 +910,7 @@ fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool) -> Result<()> {
+fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool, market: u8) -> Result<()> {
     use ucore::siglab::SigLab;
     let (exit_grid, exit_lse, exit_long) = ex;
     let mut lat = if penalty { LatencyModel::stressed(stress).with_measured_penalty() } else { LatencyModel::stressed(stress) };
@@ -904,6 +919,7 @@ fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: Stri
     }
     let mut lab = SigLab::new(stake, lat);
     lab.create_slip = create_slip;
+    lab.market = market;
     lab.only = only.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
     if exit_grid {
         lab.exits = ucore::siglab::exit_grid();
@@ -949,6 +965,137 @@ fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: Stri
         if !s.starts_with("rm_") {
             println!("  {s:24} fires {}", lab.fires[i]);
         }
+    }
+    Ok(())
+}
+
+fn mechanics(data: Vec<PathBuf>) -> Result<()> {
+    let mut quote_of: FxHashMap<Pk, (Pk, u8)> = FxHashMap::default();
+    let mut children: FxHashMap<Pk, u32> = FxHashMap::default();
+    let (mut n_create, mut n_depth, mut n_hr, mut n_cb) = (0u64, 0u64, 0u64, 0u64);
+    let mut trades_by_kind: FxHashMap<&'static str, (u64, u64)> = FxHashMap::default();
+    let mut fee_by_tier: FxHashMap<u32, (u64, f64)> = FxHashMap::default();
+    let mut ix_mix: FxHashMap<u8, u64> = FxHashMap::default();
+    for d in &data {
+        for blk in StoreReader::open(d)? {
+            for e in &blk {
+                match e {
+                    Ev::Create(c) => {
+                        n_create += 1;
+                        if c.holder_reward {
+                            n_hr += 1;
+                        }
+                        if c.cashback {
+                            n_cb += 1;
+                        }
+                        if !ucore::pump::is_sol_quote(&c.quote_mint) {
+                            n_depth += 1;
+                            quote_of.insert(c.mint, (c.quote_mint, c.depth));
+                            *children.entry(c.quote_mint).or_default() += 1;
+                        }
+                    }
+                    Ev::Trade(t) => {
+                        *ix_mix.entry(t.ix).or_default() += 1;
+                        let kind = if !t.sol_quote { "child (pump-coin quote)" } else if children.contains_key(&t.mint) { "parent (has children)" } else if t.mayhem { "mayhem" } else { "normal" };
+                        let e2 = trades_by_kind.entry(kind).or_default();
+                        e2.0 += 1;
+                        e2.1 += t.sol;
+                        if t.sol_quote && !t.mayhem {
+                            let mc = (t.vsol as f64 / t.vtok.max(1) as f64) * 1e6; // SOL mcap ≈ price * 1e15 / 1e9
+                            let f = fee_by_tier.entry(t.fee_bps).or_default();
+                            f.0 += 1;
+                            f.1 += mc;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    println!("creates {n_create}: pump-coin-quoted {n_depth}, holder-reward {n_hr}, cashback {n_cb}");
+    // show a few raw child trades
+    let mut shown = 0;
+    'o: for d in &data {
+        for blk in StoreReader::open(d)? {
+            for e in &blk {
+                if let Ev::Trade(t) = e {
+                    if !t.sol_quote && shown < 4 {
+                        println!("  child trade {} buy {} sol {} tok {} vsol {} vtok {} rsol {} rtok {} fee {} bps {} ix {}", t.mint, t.is_buy, t.sol, t.tok, t.vsol, t.vtok, t.rsol, t.rtok, t.fee, t.fee_bps, t.ix);
+                        shown += 1;
+                    }
+                    if shown >= 4 {
+                        break 'o;
+                    }
+                }
+            }
+        }
+    }
+    let mut kids: Vec<_> = children.iter().collect();
+    kids.sort_by(|a, b| b.1.cmp(a.1));
+    println!("quote coins with most children: {:?}", kids.iter().take(8).map(|(k, v)| (k.to_b58(), **v)).collect::<Vec<_>>());
+    for (k, (n, sol)) in &trades_by_kind {
+        println!("trades {k}: {n} (quote volume {:.0} units/1e9)", *sol as f64 / 1e9);
+    }
+    let mut fb: Vec<_> = fee_by_tier.into_iter().collect();
+    fb.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+    for (bps, (n, mc)) in fb.iter().take(10) {
+        println!("fee {bps} bps: {n} trades, mean mcap {:.1} SOL", mc / *n as f64);
+    }
+    println!("instruction mix: {ix_mix:?}");
+    Ok(())
+}
+
+fn child_check(data: PathBuf) -> Result<()> {
+    use ucore::mint::{DumpCfg, MintTracker};
+    let mut mts: FxHashMap<Pk, MintTracker> = FxHashMap::default();
+    let dc = DumpCfg::default();
+    let (mut ok, mut bad, mut n) = (0u64, 0u64, 0u64);
+    let mut qpl: Vec<f64> = Vec::new();
+    for blk in StoreReader::open(&data)? {
+        for e in &blk {
+            match e {
+                Ev::Create(c) if !ucore::pump::is_sol_quote(&c.quote_mint) && !c.mayhem => {
+                    mts.insert(c.mint, MintTracker::new(c));
+                }
+                Ev::Trade(t) => {
+                    if let Some(mt) = mts.get_mut(&t.mint) {
+                        let before = mt.curve;
+                        let first = mt.n_trades == 0;
+                        mt.on_trade(t, &dc);
+                        if t.mint.to_b58().starts_with("2yLPN") && mt.n_trades <= 6 {
+                            println!("    trace n{} buy {} ix {} raw sol {} tok {} fee {} bps {} raw vtok {} | k {:.4} | before vsol {} vtok {} -> after vsol {} vtok {}", mt.n_trades, t.is_buy, t.ix, t.sol, t.tok, t.fee, t.fee_bps, t.vtok, mt.quote_per_lamport, before.vsol, before.vtok, mt.curve.vsol, mt.curve.vtok);
+                        }
+                        n += 1;
+                        if first {
+                            qpl.push(mt.quote_per_lamport);
+                            continue;
+                        }
+                        // independent check from the raw event: q = fee·1e4/bps, vq_pre = q·vtok_after/tok
+                        if t.fee_bps == 0 || t.tok == 0 || mt.quote_per_lamport == 0.0 {
+                            continue;
+                        }
+                        let q_raw = t.fee as f64 * 1e4 / t.fee_bps as f64;
+                        let vq_pre_norm = q_raw * t.vtok as f64 / t.tok as f64 / mt.quote_per_lamport;
+                        let rel2 = (vq_pre_norm / before.vsol.max(1) as f64 - 1.0).abs();
+                        let tokens_ok = if t.is_buy { before.vtok == t.vtok + t.tok } else { before.vtok + t.tok == t.vtok };
+                        if tokens_ok && rel2 < 0.002 {
+                            ok += 1
+                        } else {
+                            bad += 1;
+                            if bad <= 6 {
+                                println!("  off: {} ix {} fee {} bps {} rel {:.4} tokens_ok {} sig {}", t.mint, t.ix, t.fee, t.fee_bps, rel2, tokens_ok, t.m.sig);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    qpl.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    println!("child trades {n}: continuity ok {ok}, off {bad} ({:.2}%)", 100.0 * bad as f64 / (ok + bad).max(1) as f64);
+    if !qpl.is_empty() {
+        println!("quote units per lamport: p10 {:.4} median {:.4} p90 {:.4}", qpl[qpl.len() / 10], qpl[qpl.len() / 2], qpl[qpl.len() * 9 / 10]);
     }
     Ok(())
 }

@@ -159,6 +159,9 @@ pub struct RawTrade {
     pub cashback_bps: u64,
     pub cashback: u64,
     pub quote_mint: Pk,
+    pub quote_amount: u64,
+    pub virtual_quote_reserves: u64,
+    pub real_quote_reserves: u64,
 }
 
 pub fn decode_trade(body: &[u8]) -> Option<RawTrade> {
@@ -198,6 +201,9 @@ pub fn decode_trade(body: &[u8]) -> Option<RawTrade> {
         let n = r.u32()? as usize;
         r.skip(n.checked_mul(34)?)?; // Shareholder { address: Pubkey, share_bps: u16 }
         t.quote_mint = r.pk()?;
+        t.quote_amount = r.u64()?;
+        t.virtual_quote_reserves = r.u64()?;
+        t.real_quote_reserves = r.u64()?;
         Some(())
     })();
     Some(t)
@@ -224,6 +230,7 @@ pub struct RawCreate {
     pub creator_fee_bps: u64,
     pub holder_reward: bool,
     pub depth: u8,
+    pub virtual_quote_reserves: u64,
 }
 
 pub fn decode_create(body: &[u8]) -> Option<RawCreate> {
@@ -248,7 +255,7 @@ pub fn decode_create(body: &[u8]) -> Option<RawCreate> {
         c.mayhem = r.bool()?;
         c.cashback = r.bool()?;
         c.quote_mint = r.pk()?;
-        let _vq = r.u64()?;
+        c.virtual_quote_reserves = r.u64()?;
         c.creator_fee_bps = r.u64()?;
         c.holder_reward = r.bool()?;
         c.depth = r.u8()?;

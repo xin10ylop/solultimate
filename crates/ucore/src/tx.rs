@@ -252,7 +252,7 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
                             cashback: c.cashback,
                             holder_reward: c.holder_reward,
                             depth: c.depth,
-                            vsol: c.virtual_sol_reserves,
+                            vsol: if pump::is_sol_quote(&c.quote_mint) || c.virtual_quote_reserves == 0 { c.virtual_sol_reserves } else { c.virtual_quote_reserves },
                             vtok: c.virtual_token_reserves,
                             rtok: c.real_token_reserves,
                             supply: c.token_total_supply,
@@ -264,6 +264,13 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
                     traded_mints.insert(t.mint);
                     let fee = t.fee + t.creator_fee + t.cashback;
                     let fee_bps = (t.fee_bps + t.creator_fee_bps + t.cashback_bps) as u32;
+                    // coins paired with a pump coin / USDC report amounts in the quote fields
+                    let sq = pump::is_sol_quote(&t.quote_mint);
+                    let (q_amt, vq, rq) = if sq || t.virtual_quote_reserves == 0 {
+                        (t.sol_amount, t.virtual_sol_reserves, t.real_sol_reserves)
+                    } else {
+                        (t.quote_amount, t.virtual_quote_reserves, t.real_quote_reserves)
+                    };
                     push(
                         out,
                         Ev::Trade(Trade {
@@ -271,13 +278,13 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
                             mint: t.mint,
                             user: t.user,
                             is_buy: t.is_buy,
-                            sol: t.sol_amount,
+                            sol: q_amt,
                             tok: t.token_amount,
                             fee,
                             fee_bps,
-                            vsol: t.virtual_sol_reserves,
+                            vsol: vq,
                             vtok: t.virtual_token_reserves,
-                            rsol: t.real_sol_reserves,
+                            rsol: rq,
                             rtok: t.real_token_reserves,
                             ix: pump::ix_code(&t.ix_name),
                             mayhem: t.mayhem,

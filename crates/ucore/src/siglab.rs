@@ -235,6 +235,8 @@ pub struct SigLab {
     pub only: Vec<String>,
     /// Price limit for create-tx triggers (max adverse price increase; 1e9 = none).
     pub create_slip: f64,
+    /// Which markets: 0 = SOL-quoted only, 1 = children (pump-coin / USDC quoted) only, 2 = both.
+    pub market: u8,
 }
 
 impl SigLab {
@@ -260,6 +262,7 @@ impl SigLab {
             names: signal_names(),
             only: Vec::new(),
             create_slip: 2.0,
+            market: 0,
         }
     }
 
@@ -273,6 +276,10 @@ impl SigLab {
             return;
         }
         let Some(mt) = self.mints.get(&mint) else { return };
+        if mt.child && (mt.quote_per_lamport == 0.0 || mt.n_trades == 0) {
+            // child curve not reconstructed yet: no trustworthy price
+            return;
+        }
         let curve = mt.curve;
         let fee = mt.fee_bps;
         let age = (mt.age_slots(slot) * crate::pump::SLOT_MS) as f32 / 1000.0;
@@ -314,7 +321,12 @@ impl SigLab {
             }
             Ev::Create(c) => {
                 let mut mt = MintTracker::new(c);
-                if mt.tradable && !mt.mayhem {
+                let ok_market = match self.market {
+                    0 => mt.tradable,
+                    1 => mt.child && !c.cashback,
+                    _ => mt.tradable || (mt.child && !c.cashback),
+                };
+                if ok_market && !mt.mayhem {
                     let (op, how) = self.book.attribute_launch(c.user, c.m.slot);
                     mt.ctx = self.book.launch_ctx(op, how, &c.user, c.m.slot);
                     self.mints.insert(c.mint, mt);
@@ -454,7 +466,7 @@ impl SigLab {
     fn on_trade(&mut self, t: &Trade) {
         // landings before this trade
         if let Some(ids) = self.by_mint.get(&t.mint).cloned() {
-            if let Some(mt) = self.mints.get(&t.mint) {
+            if let Some(mt) = self.mints.get(&t.mint).filter(|m| !m.child || m.n_trades > 0) {
                 let (curve, fee) = (mt.curve, mt.fee_bps);
                 let cx = ExecCtx { latency: &self.latency, costs: &self.costs, buy_slip: 1.0, sell_slip: 0.25, dump_sell_slip: 0.6 };
                 for id in ids {

@@ -141,6 +141,12 @@ pub struct MintTracker {
     pub n_buys: u32,
     pub n_sells: u32,
     pub max_price_after_b0: f64,
+    /// Quote is a pump coin / USDC / listed token instead of SOL.
+    pub child: bool,
+    /// Quote units per lamport of SOL (≈ initial virtual quote reserves / 30 SOL).
+    pub quote_per_lamport: f64,
+    /// Constant product of the child curve in normalized units (vq_norm · vtok).
+    pub child_k: f64,
     /// Creator's contiguous transaction group in the create slot (bundle) has ended.
     pub g0_done: bool,
     pub g0_end_tx: u32,
@@ -181,7 +187,8 @@ pub const PWIN_SLOTS: [u64; 7] = {
 impl MintTracker {
     pub fn new(c: &Create) -> MintTracker {
         let tradable = crate::pump::is_sol_quote(&c.quote_mint) && c.depth == 0 && !c.cashback;
-        MintTracker {
+        // children (pump-coin / USDC quoted) are tradable in research when enabled by the caller
+        let mut mt = MintTracker {
             mint: c.mint,
             dev: c.user,
             create_slot: c.m.slot,
@@ -218,10 +225,20 @@ impl MintTracker {
             n_buys: 0,
             n_sells: 0,
             max_price_after_b0: 0.0,
+            child: !crate::pump::is_sol_quote(&c.quote_mint),
+            // derived from the first trade's exact reserve (robust for old and new recordings)
+            quote_per_lamport: 0.0,
+            child_k: 0.0,
             g0_done: false,
             g0_end_tx: c.m.tx_idx,
             ctx: LaunchCtx::default(),
+        };
+        if mt.child && mt.quote_per_lamport > 0.0 {
+            mt.curve.vsol = crate::pump::INITIAL_VIRTUAL_SOL;
+            mt.init_price = mt.curve.vsol as f64 / mt.curve.vtok.max(1) as f64;
+            mt.max_price = mt.init_price;
         }
+        mt
     }
 
     /// Peak price after the first block relative to the first-candle close (≥ 1).
@@ -232,6 +249,9 @@ impl MintTracker {
         }
     }
 
+    /// Extra fee (bps per leg) we pay on children to convert SOL↔quote coin.
+    pub const CHILD_EXTRA_FEE_BPS: u32 = 30;
+
     pub fn age_slots(&self, slot: u64) -> u64 {
         slot.saturating_sub(self.create_slot)
     }
@@ -240,12 +260,73 @@ impl MintTracker {
         self.curve.mcap_sol()
     }
 
+    /// Older recordings stored 0 for the quote amounts of child coins. Rebuild them exactly
+    /// from the fee (fixed rate) and constant product: vq_before = q · vtok_after / tokens.
+    pub fn repair_child(&self, t: &Trade) -> Option<Trade> {
+        if !self.child || t.sol != 0 || t.tok == 0 || t.fee_bps == 0 || t.fee == 0 {
+            return None;
+        }
+        let q = (t.fee as u128 * 10_000 / t.fee_bps as u128) as u64;
+        let vq_pre = (q as u128 * t.vtok as u128 / t.tok as u128) as u64;
+        let vq_post = if t.is_buy { vq_pre + q } else { vq_pre.saturating_sub(q) };
+        let mut x = t.clone();
+        x.sol = q;
+        x.vsol = vq_post;
+        x.rsol = self.curve.rsol.saturating_add(if t.is_buy { q } else { 0 }).saturating_sub(if t.is_buy { 0 } else { q });
+        Some(x)
+    }
+
     /// Apply a curve trade. Returns the signals it raised.
     pub fn on_trade(&mut self, t: &Trade, cfg: &DumpCfg) -> Signals {
+        let repaired = self.repair_child(t);
+        let mut owned;
+        let t = match repaired {
+            Some(x) => {
+                owned = x;
+                &mut owned
+            }
+            None => {
+                owned = t.clone();
+                &mut owned
+            }
+        };
+        if self.child {
+            if self.quote_per_lamport == 0.0 && t.vsol > 0 {
+                // old data: the first trade's pre-trade reserve ≈ the launch's initial quote reserve
+                let vq_pre = if t.is_buy { t.vsol.saturating_sub(t.sol) } else { t.vsol + t.sol };
+                self.quote_per_lamport = vq_pre as f64 / crate::pump::INITIAL_VIRTUAL_SOL as f64;
+            }
+            if self.quote_per_lamport > 0.0 {
+                // express quote amounts in SOL-equivalent lamports (constant product is scale-free)
+                let k = self.quote_per_lamport;
+                t.sol = (t.sol as f64 / k) as u64;
+                t.vsol = (t.vsol as f64 / k) as u64;
+                t.rsol = (t.rsol as f64 / k) as u64;
+                t.fee = (t.fee as f64 / k) as u64;
+                if self.n_trades == 0 {
+                    let vq_pre = if t.is_buy { t.vsol.saturating_sub(t.sol) } else { t.vsol + t.sol };
+                    let vt_pre = if t.is_buy { t.vtok + t.tok } else { t.vtok.saturating_sub(t.tok) };
+                    self.curve = Curve { vsol: vq_pre, vtok: vt_pre, rsol: 0, rtok: self.curve.rtok };
+                    self.init_price = vq_pre as f64 / vt_pre.max(1) as f64;
+                    self.max_price = self.init_price;
+                    self.child_k = vq_pre as f64 * vt_pre as f64;
+                }
+                if self.child_k > 0.0 && t.vtok > 0 {
+                    // exact: reserve = k / tokens (token reserves are exact in every event)
+                    let post = self.child_k / t.vtok as f64;
+                    let pre = self.curve.vsol as f64;
+                    t.vsol = post as u64;
+                    t.sol = (post - pre).abs() as u64;
+                }
+            } else {
+                return Signals::default();
+            }
+        }
+        let t: &Trade = t;
         let pre = self.curve;
         self.curve = Curve { vsol: t.vsol, vtok: t.vtok, rsol: t.rsol, rtok: t.rtok };
         if t.fee_bps > 0 || t.mayhem {
-            self.fee_bps = t.fee_bps;
+            self.fee_bps = t.fee_bps + if self.child { Self::CHILD_EXTRA_FEE_BPS } else { 0 };
         }
         self.n_trades += 1;
         self.last_trade_slot = t.m.slot;
