@@ -1,9 +1,10 @@
 # solultimate
 
-A Rust engine for pump.fun on Solana built around an **identity-free** order-flow model:
-it trades only on the structure of each coin's flow (momentum, net SOL flow, sniper
-sell-offs, holder concentration), never on who the wallets are. So it has nothing that goes
-stale when operators rotate. Everything is evaluated with your *measured* landing latency
+A Rust engine for pump.fun on Solana built around an order-flow model. It scores each
+coin's flow (momentum, net SOL flow, sniper sell-offs, holder concentration) together with
+wallet-derived context (how the dev was funded, how the launch links to earlier ones, how
+that operator's launches ran). It never copy-trades: it learns *types* of setups, so it
+does not go stale when operators rotate wallets. Everything is evaluated with your *measured* landing latency
 and every cost, and validated walk-forward, day by day. No Twitter, KOLs, alpha groups or
 copy trading.
 
@@ -23,6 +24,8 @@ gRPC  ───────┤  (pump events, SOL     │   every launch, measur
 
 * **[docs/STRATEGY.md](docs/STRATEGY.md)**: the logic, what was taken from the reference
   videos and what is new, the math, and the pilot results on real mainnet data.
+* **[docs/PILOT.md](docs/PILOT.md)**: 25.6 h of real mainnet data. Every hypothesis tested
+  and its out-of-sample result.
 * **[docs/RUNBOOK.md](docs/RUNBOOK.md)**: the phases (30-day recording → evaluation gate →
   paper → canary → scale), the go-live thresholds and the safety controls.
 

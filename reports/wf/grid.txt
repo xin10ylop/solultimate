@@ -1,0 +1,16 @@
+stretch h30 +wallet q=0.02 | periods traded 15 profitable 7 total PnL +0.412 SOL mean ret/trade +0.0206 best period share of PnL: 1.42 
+stretch h30 +wallet q=0.05 | periods traded 22 profitable 5 total PnL -2.003 SOL mean ret/trade -0.0324 
+stretch h30 --base-only q=0.02 | periods traded 19 profitable 9 total PnL +0.614 SOL mean ret/trade +0.0208 best period share of PnL: 0.94 
+stretch h30 --base-only q=0.05 | periods traded 22 profitable 5 total PnL -2.379 SOL mean ret/trade -0.0266 
+stretch h60 +wallet q=0.02 | periods traded 11 profitable 6 total PnL +0.340 SOL mean ret/trade +0.0851 best period share of PnL: 0.98 
+stretch h60 +wallet q=0.05 | periods traded 20 profitable 11 total PnL +0.214 SOL mean ret/trade +0.0102 best period share of PnL: 1.49 
+stretch h60 --base-only q=0.02 | periods traded 14 profitable 6 total PnL -0.892 SOL mean ret/trade -0.0743 
+stretch h60 --base-only q=0.05 | periods traded 22 profitable 6 total PnL -2.593 SOL mean ret/trade -0.0691 
+early h30 +wallet q=0.02 | periods traded 19 profitable 8 total PnL -0.474 SOL mean ret/trade -0.0114 
+early h30 +wallet q=0.05 | periods traded 22 profitable 6 total PnL -3.377 SOL mean ret/trade -0.0289 
+early h30 --base-only q=0.02 | periods traded 21 profitable 6 total PnL -1.943 SOL mean ret/trade -0.0349 
+early h30 --base-only q=0.05 | periods traded 22 profitable 6 total PnL -3.776 SOL mean ret/trade -0.0233 
+early h60 +wallet q=0.02 | periods traded 13 profitable 4 total PnL -0.757 SOL mean ret/trade -0.0644 
+early h60 +wallet q=0.05 | periods traded 22 profitable 10 total PnL -1.585 SOL mean ret/trade -0.0255 
+early h60 --base-only q=0.02 | periods traded 18 profitable 10 total PnL +0.594 SOL mean ret/trade +0.0273 best period share of PnL: 0.90 
+early h60 --base-only q=0.05 | periods traded 22 profitable 5 total PnL -4.800 SOL mean ret/trade -0.0499 

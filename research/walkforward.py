@@ -38,7 +38,8 @@ df = df[df.net.notna()]
 df["period"] = ((df.time - df.time.min()) // a.period).astype(int)
 hold_slots = {"h5": 5, "h15": 15, "h30": 30, "h60": 60}[L] * 1000 // 211 + 5
 params = dict(objective="huber", alpha=0.3, learning_rate=0.03, num_leaves=15, min_data_in_leaf=300,
-              feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=10.0, verbose=-1, seed=1)
+              feature_fraction=0.8, bagging_fraction=0.8, bagging_freq=1, lambda_l2=10.0, verbose=-1, seed=1,
+              num_threads=4, max_bin=63)
 
 
 def trade(sel):
@@ -67,6 +68,7 @@ for k in periods:
     thr = np.quantile(m.predict(tr[feat_cols]), 1 - a.top_q)
     p = m.predict(te[feat_cols])
     x = trade(te[p >= thr])
+    print(f"  period {k}: train {len(tr)} test {len(te)} trades {len(x)} mean {x.mean() if len(x) else float('nan'):+.4f}", flush=True)
     rows.append((k, len(te), len(x), x.mean() if len(x) else np.nan, (x > 0).mean() if len(x) else np.nan, x.sum() * a.stake))
 
 r = pd.DataFrame(rows, columns=["period", "decisions", "trades", "mean_ret", "win", "pnl_sol"])

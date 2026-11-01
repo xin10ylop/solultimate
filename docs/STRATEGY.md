@@ -45,28 +45,28 @@ data) on the trailing N periods, picks the threshold on training data only, and 
 the next period with one trade per coin and at most `max_open` concurrent. The go-live
 criterion is the share of profitable days and the concentration of PnL, not the total.
 
-## 2. What the pilot data says (real mainnet blocks, Nov 2026)
+## 2. What the pilot data says
 
-| hypothesis (identity-free unless marked) | result on pilot |
-|---|---|
-| Buy every launch at create / first-candle close | −4% to −6% per trade (≈ the round-trip cost): no edge |
-| "Big bundle" launches | looked +64%/trade until bundles were modelled as atomic; −3.6% after. **Fake edge from optimistic fills** |
-| Flow model, coins 2 s–10 min old | best held-out cells −2% to −5%/trade: no edge |
-| Flow model, "final stretch" coins (30–97% progress, ≤1 h old) | held-out ≈ break-even (+0.2% … +1%/trade at 0.1 SOL). The model improves on the −3.5% baseline by ~3.5 pts, but not past costs |
-| Same model, *in-sample* hours | +7% … +16%/trade, 57–68% win rate. **This is what overfitting looks like**; it vanishes out of sample |
-| Mayhem-mode coins (pump.fun's agent rewrites reserves) | agent jumps are unpredictable (autocorr −0.02) with **negative drift −1% to −3% per jump**: avoid |
-| Clones of hot tickers (on-chain narrative) | no better than other launches |
-| Serial operators (identity-based, off by default) | a few strong records (+9% … +26%/trade, n = 7–41), none statistically proven in hours of data, and they rotate |
+Full results: **[PILOT.md](PILOT.md)** (25.6 h of mainnet, every cost and the measured
+latency included, walk-forward by hour). In short:
 
-The honest summary is that **no strategy is proven profitable yet.** The most promising
-identity-free regime (final stretch, 30–60 s holds) is at break-even after all costs on
-hours of data. Two levers decide it, and both need the 30-day recording:
+* No idea tested is consistently profitable yet. The best cells are positive only at the
+  most selective threshold, on ≤ 50% of hours, with one or two hours carrying the PnL.
+* The most promising lead is final-stretch coins (30–97% curve progress), 30–60 s holds,
+  **with wallet-derived (non-copy) features**: funding kind, amount and delay, launch
+  linkage, and the operator's past outcomes. These lift the 60 s hold from −7.4% to
+  +8.5% per trade at the top 2% of scores.
+* Big-bundle "edges" and in-sample model results are illusions. Mayhem coins bleed.
 
-1. **More data.** A 31-feature model needs weeks, not hours.
-2. **Stake size vs fixed costs.** Tips + priority + base fees are ~0.0026 SOL per round
-   trip: 2.6% of a 0.1 SOL stake but 0.5% of 0.5 SOL. Curve fees (0.95% + 0.30% per side)
-   are the floor at any size. The pilot's break-even at 0.1 SOL is roughly +2% at 0.5 SOL,
-   if price impact stays small (the simulator includes our own impact).
+## 1b. Wallet intelligence without copy trading
+
+The model may know *who* is behind a launch, but it never copies anyone's buys. The
+wallet-derived features (`how_linked`, `fund_kind`, `fund_sol`, `fund_age_s`,
+`op_created_before`, `op_resolved`, `op_mean_ln_peak`, `op_frac_2x`) describe the *type*
+of operator and setup. A new operator with the same funding pattern and history scores the
+same as the old one, so the model does not decay when wallets rotate. These features are
+computed identically in the brain and in the research simulator, from pre-launch facts
+only; an operator's outcomes become known 10 minutes after each launch.
 
 ## 3. Execution realism (applies to everything)
 

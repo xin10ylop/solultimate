@@ -1,0 +1,48 @@
+  period 4: train 28695 test 9314 trades 2 mean +0.6636
+  period 5: train 38009 test 7974 trades 1 mean -0.4690
+  period 6: train 45983 test 7383 trades 0 mean +nan
+  period 7: train 53366 test 8429 trades 4 mean +0.1558
+  period 8: train 61795 test 6562 trades 0 mean +nan
+  period 9: train 61348 test 7873 trades 0 mean +nan
+  period 10: train 60753 test 6652 trades 2 mean +0.0398
+  period 11: train 61613 test 6446 trades 0 mean +nan
+  period 12: train 60633 test 7074 trades 0 mean +nan
+  period 13: train 58393 test 5528 trades 0 mean +nan
+  period 14: train 55947 test 3383 trades 0 mean +nan
+  period 15: train 51947 test 3461 trades 1 mean -0.3115
+  period 16: train 46979 test 3951 trades 0 mean +nan
+  period 17: train 44368 test 3458 trades 0 mean +nan
+  period 18: train 39953 test 3183 trades 0 mean +nan
+  period 19: train 36484 test 3345 trades 1 mean +0.0229
+  period 20: train 33383 test 4318 trades 0 mean +nan
+  period 21: train 30627 test 4293 trades 1 mean -0.0384
+  period 22: train 29392 test 4977 trades 1 mean +0.4815
+  period 23: train 30986 test 4217 trades 1 mean +0.0580
+  period 24: train 31742 test 5209 trades 1 mean -0.2623
+  period 25: train 33000 test 4649 trades 1 mean -0.1504
+ period  decisions  trades  mean_ret     win  pnl_sol
+      4       9314       2   +0.6636 +1.0000  +0.3318
+      5       7974       1   -0.4690 +0.0000  -0.1172
+      6       7383       0       NaN     NaN  +0.0000
+      7       8429       4   +0.1558 +0.7500  +0.1558
+      8       6562       0       NaN     NaN  +0.0000
+      9       7873       0       NaN     NaN  +0.0000
+     10       6652       2   +0.0398 +0.5000  +0.0199
+     11       6446       0       NaN     NaN  +0.0000
+     12       7074       0       NaN     NaN  +0.0000
+     13       5528       0       NaN     NaN  +0.0000
+     14       3383       0       NaN     NaN  +0.0000
+     15       3461       1   -0.3115 +0.0000  -0.0779
+     16       3951       0       NaN     NaN  +0.0000
+     17       3458       0       NaN     NaN  +0.0000
+     18       3183       0       NaN     NaN  +0.0000
+     19       3345       1   +0.0229 +1.0000  +0.0057
+     20       4318       0       NaN     NaN  +0.0000
+     21       4293       1   -0.0384 +0.0000  -0.0096
+     22       4977       1   +0.4815 +1.0000  +0.1204
+     23       4217       1   +0.0580 +1.0000  +0.0145
+     24       5209       1   -0.2623 +0.0000  -0.0656
+     25       4649       1   -0.1504 +0.0000  -0.0376
+
+periods traded 11  profitable 6  total PnL +0.340 SOL  mean ret/trade +0.0851
+best period share of PnL: 0.98
