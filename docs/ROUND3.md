@@ -114,3 +114,27 @@ fee and the simulator charged it. The pool's fee tier is now used.)
   market means information about future flow that others do not price: which coins an operator
   will pump (round 2's launch-structure family, +8% on some days) or which will draw retail flow.
   It must be judged per day across many regimes, which is what the 30-day recording is for.
+
+## 7. Coins quoted in other tokens, and cross-pool arbitrage
+
+**Inventory (4 h forward period).** 22% of curve launches are quoted in a token other than SOL:
+PUMP (561), USDC (65) and ~135 other tokens. PumpSwap had 7,726 traded pools; ~1,980 have a
+non-SOL quote, spread over ~1,035 quote tokens, of which only 138 also have a SOL pool on
+PumpSwap. Many coins trade in several pools (PUMP: 4 SOL pools, 2 USDC pools, pump-coin pools;
+some pump coins sit in 10+ pools). Pools created outside migrations pay a flat 0.30% per hop
+instead of 1.2%.
+
+**Arbitrage test.** Where one coin trades in several pools, prices must agree, and a gap can be
+closed in one atomic transaction (it fails and costs only the network fee if the gap is gone).
+`arb.py` checked 674 two-pool and 15,854 three-pool SOL cycles at the end of every slot for 3.94 h
+(263k evaluations), using exact reserves and each pool's fee:
+
+* gaps above the summed fees appear in 2% of two-pool and 21% of three-pool evaluations, but they
+  sit in pools so thin that the best trade is dust;
+* opportunities worth ≥ 0.001 SOL after a 0.0002 SOL transaction cost: **1 in 3.94 h**, open for
+  1 slot (SOL → USDC → PUMP → SOL).
+
+Liquid gaps are closed inside the same slot by existing arbitrage bots. That race belongs to
+searchers co-located with block producers, not to a bot landing 1–2 slots late. Not covered yet:
+quote tokens whose SOL market is on Raydium / Meteora / Orca (~900 of them), which needs decoders
+for those DEXes.

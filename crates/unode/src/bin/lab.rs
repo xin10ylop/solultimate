@@ -1112,8 +1112,8 @@ fn child_check(data: PathBuf) -> Result<()> {
 /// mint u32, user u32, signer u32, slot u32 (offset from first slot), tx_idx u32, ev_idx u16,
 /// is_buy u8, flags u8 (1 mayhem, 2 sol_quote), sol u64, tok u64, vsol u64, vtok u64, fee u64,
 /// cu_price u64, tip u32 (lamports, saturating), shape u32, tx_fee u32, cu_limit u32.
-/// creates.bin rows (24 bytes): mint u32, dev u32, slot u32, tx_idx u32, flags u32 (1 mayhem, 2 sol_quote,
-/// 4 holder_reward), block_time u32. completes.bin: mint u32, slot u32. ids: mints.txt / wallets.txt.
+/// creates.bin rows (28 bytes): mint u32, dev u32, slot u32, tx_idx u32, flags u32 (1 mayhem, 2 sol_quote,
+/// 4 holder_reward), block_time u32, quote mint u32. completes.bin: mint u32, slot u32. ids: mints.txt / wallets.txt.
 fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
     use std::io::BufWriter;
     fs::create_dir_all(&out)?;
@@ -1148,7 +1148,8 @@ fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
                     let d = id(&mut wallets, &mut wal_list, c.user);
                     let sq = ucore::pump::is_sol_quote(&c.quote_mint);
                     let fl = (c.mayhem as u32) | ((sq as u32) << 1) | ((c.holder_reward as u32) << 2);
-                    for v in [m, d, (c.m.slot - base_slot) as u32, c.m.tx_idx, fl, c.m.block_time as u32] {
+                    let qm = id(&mut mints, &mut mint_list, c.quote_mint);
+                    for v in [m, d, (c.m.slot - base_slot) as u32, c.m.tx_idx, fl, c.m.block_time as u32, qm] {
                         cw.write_all(&v.to_le_bytes())?;
                     }
                     nc += 1;

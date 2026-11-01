@@ -6,7 +6,7 @@ TR = np.dtype([
     ('mint', '<u4'), ('user', '<u4'), ('signer', '<u4'), ('slot', '<u4'), ('tx', '<u4'), ('ev', '<u2'),
     ('buy', 'u1'), ('flags', 'u1'), ('sol', '<u8'), ('tok', '<u8'), ('vsol', '<u8'), ('vtok', '<u8'),
     ('fee', '<u8'), ('cu', '<u8'), ('tip', '<u4'), ('shape', '<u4'), ('txfee', '<u4'), ('culim', '<u4')])
-CR = np.dtype([('mint', '<u4'), ('dev', '<u4'), ('slot', '<u4'), ('tx', '<u4'), ('flags', '<u4'), ('bt', '<u4')])
+CR = np.dtype([('mint', '<u4'), ('dev', '<u4'), ('slot', '<u4'), ('tx', '<u4'), ('flags', '<u4'), ('bt', '<u4'), ('qmint', '<u4')])
 CO = np.dtype([('mint', '<u4'), ('slot', '<u4')])
 
 
