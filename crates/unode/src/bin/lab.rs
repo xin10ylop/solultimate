@@ -199,7 +199,7 @@ fn f(x: f64) -> String {
 
 fn write_launches(path: &PathBuf, rows: &[LaunchRow], names: &[String]) -> Result<()> {
     let mut w = std::io::BufWriter::new(fs::File::create(path)?);
-    write!(w, "mint,symbol,dev,op,op_launches_before,how,create_slot,create_time_utc,mayhem,block0_buyers,block0_sol,dev_buy_sol,crowd,block0_end_mcap_sol,entry_mcap_sol,p2s,p5s,p10s,p30s,p60s,p3m,p10m,first_dump_slots,dump_kind,max_buy_sol,n_trades,completed,chosen,honest,gate_pass,gate_reason,gate_n,gate_lcb,real_ret,real_variant,ctx_key,ctx_pass,ctx_n,ctx_lcb")?;
+    write!(w, "mint,symbol,dev,op,op_launches_before,how,create_slot,create_time_utc,mayhem,block0_buyers,block0_sol,dev_buy_sol,crowd,block0_end_mcap_sol,entry_mcap_sol,p2s,p5s,p10s,p30s,p60s,p3m,p10m,first_dump_slots,dump_kind,max_buy_sol,n_trades,completed,chosen,honest,gate_pass,gate_reason,gate_n,gate_lcb,real_ret,real_variant,fund_from,fund_sol,fund_age_slots,fund_hub,ctx_key,ctx_pass,ctx_n,ctx_lcb")?;
     for n in names {
         write!(w, ",ret_{n}")?;
     }
@@ -208,12 +208,12 @@ fn write_launches(path: &PathBuf, rows: &[LaunchRow], names: &[String]) -> Resul
         let sym: String = r.symbol.chars().filter(|c| c.is_alphanumeric()).take(16).collect();
         write!(
             w,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             r.mint, sym, r.dev, r.op, r.op_launches_before, r.how, r.create_slot, r.create_time, r.mayhem, r.block0_buyers,
             f(r.block0_sol), f(r.dev_buy_sol), r.crowd, f(r.block0_end_mcap), f(r.ref_entry_mcap), f(r.p2s), f(r.p5s), f(r.p10s),
             f(r.p30s), f(r.p60s), f(r.p3m), f(r.p10m), r.first_dump_slots, r.dump_kind, f(r.max_buy_sol), r.n_trades, r.completed,
             r.chosen, f(r.honest), r.gate_pass, r.gate_reason, r.gate_n, f(r.gate_lcb), f(r.real_ret),
-            r.real_variant, r.ctx_key, r.ctx_pass, r.ctx_n, f(r.ctx_lcb)
+            r.real_variant, r.fund_from, f(r.fund_sol), r.fund_age_slots, r.fund_hub, r.ctx_key, r.ctx_pass, r.ctx_n, f(r.ctx_lcb)
         )?;
         for x in &r.results {
             write!(w, ",{}", f(*x as f64))?;
@@ -533,7 +533,7 @@ fn write_operators(path: &PathBuf, brain: &mut Brain, names: &[String]) -> Resul
     let mut ops: Vec<(u32, Vec<usize>)> = by_op.into_iter().filter(|(_, v)| v.len() >= 3).collect();
     ops.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
     let mut w = std::io::BufWriter::new(fs::File::create(path)?);
-    writeln!(w, "op,launches,devs,first_utc,last_utc,links,med_dev_buy_sol,med_block0_sol,med_block0_buyers,med_entry_mcap,p2s,p5s,p10s,p30s,p60s,p3m,honest_n,honest_mean,honest_win,best_variant,best_mean,best_win,example_symbols")?;
+    writeln!(w, "op,launches,devs,first_utc,last_utc,links,top_funder,top_funder_share,fund_sol_min,fund_sol_max,med_fund_age_s,med_dev_buy_sol,med_block0_sol,med_block0_buyers,med_entry_mcap,p2s,p5s,p10s,p30s,p60s,p3m,honest_n,honest_mean,honest_win,best_variant,best_mean,best_win,example_symbols")?;
     for (op, idx) in ops {
         let rs: Vec<&LaunchRow> = idx.iter().map(|i| &brain.rows[*i]).collect();
         let devs: std::collections::BTreeSet<&str> = rs.iter().map(|r| r.dev.as_str()).collect();
@@ -544,6 +544,18 @@ fn write_operators(path: &PathBuf, brain: &mut Brain, names: &[String]) -> Resul
         let mut lk: Vec<_> = links.into_iter().collect();
         lk.sort();
         let lks: Vec<String> = lk.iter().map(|(k, v)| format!("{k}:{v}")).collect();
+        let mut fcount: FxHashMap<&str, usize> = FxHashMap::default();
+        for r in &rs {
+            if !r.fund_from.is_empty() {
+                *fcount.entry(r.fund_from.as_str()).or_default() += 1;
+            }
+        }
+        let top = fcount.iter().max_by_key(|x| *x.1).map(|(k, v)| (k.to_string(), *v));
+        let (top_f, top_share) = top.clone().map(|(k, v)| (k, v as f64 / rs.len() as f64)).unwrap_or_default();
+        let famt: Vec<f64> = rs.iter().filter(|r| Some(r.fund_from.as_str()) == top.as_ref().map(|t| t.0.as_str())).map(|r| r.fund_sol).collect();
+        let fmin = famt.iter().cloned().fold(f64::INFINITY, f64::min);
+        let fmax = famt.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let fage = med(rs.iter().filter(|r| r.fund_age_slots >= 0).map(|r| r.fund_age_slots as f64 * 0.4).collect());
         let hon = agg(rs.iter().map(|r| r.honest).collect());
         let mut best = (0usize, f64::NEG_INFINITY, 0.0);
         for v in 0..names.len() {
@@ -555,12 +567,17 @@ fn write_operators(path: &PathBuf, brain: &mut Brain, names: &[String]) -> Resul
         let syms: Vec<String> = rs.iter().take(4).map(|r| r.symbol.chars().filter(|c| c.is_alphanumeric()).take(10).collect()).collect();
         writeln!(
             w,
-            "{op},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{op},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             rs.len(),
             devs.len(),
             rs.iter().map(|r| r.create_time).min().unwrap_or(0),
             rs.iter().map(|r| r.create_time).max().unwrap_or(0),
             lks.join(" "),
+            top_f,
+            f(top_share),
+            f(fmin),
+            f(fmax),
+            f(fage),
             f(med(rs.iter().map(|r| r.dev_buy_sol).collect())),
             f(med(rs.iter().map(|r| r.block0_sol).collect())),
             f(med(rs.iter().map(|r| r.block0_buyers as f64).collect())),

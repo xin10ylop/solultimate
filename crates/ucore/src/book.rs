@@ -406,6 +406,11 @@ impl OperatorBook {
         (root, how)
     }
 
+    /// First fresh-wallet funding seen for `w`: (sender, lamports, slot).
+    pub fn funding_of(&self, w: &Pk) -> Option<(Pk, u64, u64)> {
+        self.funding.get(w).map(|f| (f.from, f.lamports, f.slot))
+    }
+
     /// How the dev wallet was funded: 0 unseen, 1 hub round amount, 2 hub non-round amount,
     /// 3 non-hub sender (treasury / mother / previous dev).
     pub fn funding_kind(&self, dev: &Pk) -> u8 {
