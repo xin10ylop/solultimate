@@ -41,6 +41,8 @@ pub enum Entry {
     DevSell,
     /// React to the first hard dump signal (buy the crash for a rebound).
     AfterDump,
+    /// Identity-free order-flow model (any trade event inside the configured window).
+    Flow,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

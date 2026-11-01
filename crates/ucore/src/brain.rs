@@ -50,11 +50,51 @@ impl Default for RiskCfg {
     }
 }
 
+/// Identity-free order-flow entries scored by an offline-trained LightGBM model.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FlowCfg {
+    pub enabled: bool,
+    /// JSON written by `research/flow_model.py --save`.
+    pub model_path: String,
+    /// Which label/exit rule the model predicts (h5, h15, h30, h60).
+    pub label: String,
+    /// Enter when the predicted net return (after fees and slippage) is at least this.
+    pub threshold: f64,
+    pub min_age_s: u64,
+    pub max_age_s: u64,
+    pub min_progress: f64,
+    pub max_progress: f64,
+    /// Score a coin at most once per this many seconds.
+    pub eval_every_s: u64,
+}
+
+impl Default for FlowCfg {
+    fn default() -> Self {
+        FlowCfg {
+            enabled: false,
+            model_path: "research/models/flow.json".into(),
+            label: "h60".into(),
+            threshold: 0.05,
+            min_age_s: 2,
+            max_age_s: 3600,
+            min_progress: 0.3,
+            max_progress: 0.97,
+            eval_every_s: 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrainCfg {
     pub mode: ExecMode,
     pub real_trading: bool,
+    /// Real entries from operator records (off by default: operators rotate).
+    pub operator_entries: bool,
+    /// Real entries from launch-type (context) records.
+    pub context_entries: bool,
+    pub flow: FlowCfg,
     pub shadow_stake_lamports: u64,
     pub shadow_mayhem: bool,
     pub gate: GateCfg,
@@ -82,6 +122,9 @@ impl Default for BrainCfg {
         BrainCfg {
             mode: ExecMode::Sim,
             real_trading: true,
+            operator_entries: false,
+            context_entries: false,
+            flow: FlowCfg::default(),
             shadow_stake_lamports: 100_000_000,
             shadow_mayhem: false,
             gate: GateCfg::default(),
@@ -205,6 +248,10 @@ pub struct Counters {
 
 pub struct Brain {
     pub cfg: BrainCfg,
+    flow_model: Option<crate::gbm::Gbm>,
+    flow_variant: Option<usize>,
+    flow_last: FxHashMap<Pk, u64>,
+    n_shadow: usize,
     pub book: OperatorBook,
     /// Context cohorts: launch "types" (dev buy × bundle × crowd × funding kind).
     pub ctx: FxHashMap<u64, OpStats>,
@@ -244,7 +291,12 @@ impl Brain {
             }
         }
         let bankroll = cfg.risk.bankroll_lamports as i64;
+        let n_shadow = cfg.variants.len();
         Brain {
+            flow_model: None,
+            flow_variant: None,
+            flow_last: FxHashMap::default(),
+            n_shadow,
             cfg,
             book,
             ctx: FxHashMap::default(),
@@ -267,6 +319,86 @@ impl Brain {
             rows: Vec::new(),
             intents: Vec::new(),
             counters: Counters::default(),
+        }
+    }
+
+    /// Attach the identity-free flow model (call once after `new`).
+    pub fn attach_flow_model(&mut self, g: crate::gbm::Gbm) -> anyhow::Result<()> {
+        let rules = crate::flowsim::label_rules();
+        let mut r = rules
+            .into_iter()
+            .find(|r| r.name == self.cfg.flow.label)
+            .ok_or_else(|| anyhow::anyhow!("unknown flow label {}", self.cfg.flow.label))?;
+        r.name = format!("flow_{}", r.name);
+        r.entry = Entry::Flow;
+        r.on_dump = crate::policy::DumpMode::Off;
+        self.cfg.variants.push(r);
+        self.flow_variant = Some(self.cfg.variants.len() - 1);
+        self.flow_model = Some(g);
+        Ok(())
+    }
+
+    fn n_shadow_variants(&self) -> usize {
+        self.n_shadow
+    }
+
+    /// Score the coin with the flow model and enter if it clears the threshold.
+    fn flow_hook(&mut self, mint: Pk, slot: u64, tx: u32) {
+        let (Some(g), Some(fv)) = (self.flow_model.as_ref(), self.flow_variant) else { return };
+        if !self.cfg.flow.enabled || !self.cfg.real_trading {
+            return;
+        }
+        let f = &self.cfg.flow;
+        let Some(mt) = self.mints.get(&mint) else { return };
+        let age = mt.age_slots(slot);
+        let pr = mt.curve.progress();
+        if mt.completed || mt.mayhem || age < crate::pump::secs(f.min_age_s) || age > crate::pump::secs(f.max_age_s) || pr < f.min_progress || pr > f.max_progress {
+            return;
+        }
+        let last = self.flow_last.get(&mint).copied().unwrap_or(0);
+        if last != 0 && slot < last + crate::pump::secs(f.eval_every_s) {
+            return;
+        }
+        self.flow_last.insert(mint, slot);
+        if self.launches.get(&mint).and_then(|l| l.real).is_some() {
+            return;
+        }
+        let x = crate::flow::features(mt, slot);
+        let pred = g.predict(&x);
+        if pred < f.threshold {
+            return;
+        }
+        let curve = mt.curve;
+        let fee_bps = mt.fee_bps;
+        let stake = self.cfg.risk.stake_lamports.min((self.bankroll.max(0) as f64 * self.cfg.risk.max_stake_frac) as u64);
+        let blocked = self.open_real.len() >= self.cfg.risk.max_open
+            || slot < self.paused_until
+            || self.day_pnl <= -(self.cfg.risk.daily_loss_limit_lamports as i64)
+            || stake < 10_000_000;
+        self.counters.gate_pass += 1;
+        *self.counters.gate_reasons.entry("pass_flow".into()).or_default() += 1;
+        if blocked {
+            self.counters.risk_blocked += 1;
+            return;
+        }
+        let cx = Self::exec_ctx(&self.cfg);
+        let id = self.next_id;
+        self.next_id += 1;
+        // flow entries accept at most +30% adverse fill vs the decision price
+        let mut cx2 = cx;
+        cx2.buy_slip = 0.30;
+        let p = Position::new_entry(id, mint, fv, false, stake, slot, tx, &curve, fee_bps, None, &cx2, seed_of(&mint, slot, self.cfg.seed ^ 0xF10));
+        if self.cfg.mode == ExecMode::Live {
+            let o = p.pending.as_ref().unwrap();
+            self.intents.push(Intent::Buy { pos: id, mint, lamports: o.amount, min_tokens: o.min_out, fee_bps, reason: format!("flow pred={pred:.3}") });
+        }
+        self.counters.real_entries += 1;
+        self.by_mint.entry(mint).or_default().push(id);
+        self.open_real.insert(id);
+        self.positions.insert(id, p);
+        if let Some(l) = self.launches.get_mut(&mint) {
+            l.real = Some(id);
+            l.real_variant = Some(fv);
         }
     }
 
@@ -429,12 +561,13 @@ impl Brain {
             Stage::Dump => Entry::AfterDump,
             Stage::Create | Stage::Late => Entry::Create,
         };
+        let nvar = self.n_shadow_variants();
 
         // which cohort (if any) wants a real entry at this stage
         let mut want: Option<(usize, GateDecision, &'static str)> = None;
-        if gate.pass && self.cfg.variants[chosen_op].entry == stage_entry {
+        if self.cfg.operator_entries && gate.pass && self.cfg.variants[chosen_op].entry == stage_entry {
             want = Some((chosen_op, gate.clone(), "operator"));
-        } else if let Some(g) = ctx_gate.as_ref().filter(|g| g.pass) {
+        } else if let Some(g) = ctx_gate.as_ref().filter(|g| g.pass && self.cfg.context_entries) {
             want = Some((g.variant, g.clone(), "context"));
         }
         let max_mcap = want
@@ -594,6 +727,7 @@ impl Brain {
             }
         }
         self.after_mint_event(t.mint, t.m.slot, t.m.tx_idx, s);
+        self.flow_hook(t.mint, t.m.slot, t.m.tx_idx);
     }
 
     fn book_union(&mut self, a: u32, b: u32) -> u32 {

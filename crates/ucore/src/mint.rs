@@ -6,6 +6,19 @@ use crate::pk::Pk;
 use crate::pump::TOKEN_SUPPLY;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+
+/// Compact trade record kept for rolling order-flow features.
+#[derive(Clone, Copy, Debug)]
+pub struct TradeLite {
+    pub slot: u64,
+    pub is_buy: bool,
+    pub sol: u64,
+    pub user: Pk,
+    pub price: f64,
+    /// Seller's first buy of this coin was within the last 10 s (sniper / flipper exit).
+    pub flip: bool,
+}
 
 /// Dump / exit signals raised by a single event.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +132,14 @@ pub struct MintTracker {
     pub ref_entry: Option<(u64, f64)>,
     pub ref_peaks: [f64; 7],
     pub max_buy_lamports: u64,
+    // ----- identity-free order-flow state
+    pub recent: VecDeque<TradeLite>,
+    pub first_buy: FxHashMap<Pk, u64>,
+    pub init_price: f64,
+    pub max_price: f64,
+    pub dev_max_hold: i128,
+    pub n_buys: u32,
+    pub n_sells: u32,
 }
 
 /// P-window horizons: 2s, 5s, 10s, 30s, 60s, 3m, 10m (in slots).
@@ -159,6 +180,13 @@ impl MintTracker {
             ref_entry: None,
             ref_peaks: [f64::NAN; 7],
             max_buy_lamports: 0,
+            recent: VecDeque::new(),
+            first_buy: FxHashMap::default(),
+            init_price: c.vsol as f64 / c.vtok.max(1) as f64,
+            max_price: c.vsol as f64 / c.vtok.max(1) as f64,
+            dev_max_hold: 0,
+            n_buys: 0,
+            n_sells: 0,
         }
     }
 
@@ -221,6 +249,30 @@ impl MintTracker {
         }
         if s.any_dump() && self.first_dump.is_none() {
             self.first_dump = Some((t.m.slot, s.label()));
+        }
+        // order-flow bookkeeping
+        let price = self.curve.price();
+        self.max_price = self.max_price.max(price);
+        let flip = if t.is_buy {
+            self.n_buys += 1;
+            self.first_buy.entry(t.user).or_insert(t.m.slot);
+            false
+        } else {
+            self.n_sells += 1;
+            self.first_buy.get(&t.user).map(|s0| t.m.slot.saturating_sub(*s0) <= crate::pump::secs(10)).unwrap_or(false)
+        };
+        if t.user == self.dev {
+            let h = self.holdings.get(&self.dev).copied().unwrap_or(0);
+            self.dev_max_hold = self.dev_max_hold.max(h);
+        }
+        self.recent.push_back(TradeLite { slot: t.m.slot, is_buy: t.is_buy, sol: t.sol, user: t.user, price, flip });
+        let horizon = crate::pump::secs(60);
+        while let Some(f) = self.recent.front() {
+            if t.m.slot.saturating_sub(f.slot) > horizon {
+                self.recent.pop_front();
+            } else {
+                break;
+            }
         }
         self.update_ref(t.m.slot);
         s

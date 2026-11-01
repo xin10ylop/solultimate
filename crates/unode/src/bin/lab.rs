@@ -47,6 +47,45 @@ enum Cmd {
         #[arg(long, default_value_t = u64::MAX)]
         to_slot: u64,
     },
+    /// Export identity-free order-flow features + simulated round-trip labels (CSV).
+    Features {
+        #[arg(long)]
+        data: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 250_000_000)]
+        stake: u64,
+        #[arg(long, default_value_t = 0)]
+        stress: u32,
+        #[arg(long, default_value_t = 600)]
+        max_age_s: u64,
+        #[arg(long, default_value_t = 0.0)]
+        min_progress: f64,
+        #[arg(long, default_value_t = 0.85)]
+        max_progress: f64,
+        #[arg(long, default_value_t = 0)]
+        from_slot: u64,
+        #[arg(long, default_value_t = u64::MAX)]
+        to_slot: u64,
+    },
+    /// Study mayhem-mode coins: who trades them, fees, and reserve changes between trades.
+    Mayhem {
+        #[arg(long)]
+        data: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Score rows of a features CSV with a saved flow model (parity check vs Python).
+    Score {
+        #[arg(long)]
+        model: String,
+        #[arg(long, default_value = "h60")]
+        label: String,
+        #[arg(long)]
+        features: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        n: usize,
+    },
     Replay {
         #[arg(long)]
         data: PathBuf,
@@ -66,6 +105,13 @@ enum Cmd {
         from_slot: u64,
         #[arg(long, default_value_t = u64::MAX)]
         to_slot: u64,
+        /// Enable identity-free flow entries with this model (research/flow_model.py --save).
+        #[arg(long)]
+        flow_model: Option<String>,
+        #[arg(long)]
+        flow_label: Option<String>,
+        #[arg(long)]
+        flow_threshold: Option<f64>,
     },
 }
 
@@ -73,8 +119,23 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
         Cmd::Compare { journal } => compare(journal),
+        Cmd::Score { model, label, features, n } => {
+            let g = ucore::gbm::Gbm::load(&model, &label)?;
+            let txt = fs::read_to_string(features)?;
+            let mut lines = txt.lines();
+            let hdr: Vec<&str> = lines.next().unwrap_or("").split(',').collect();
+            let idx: Vec<usize> = ucore::flow::FEATURE_NAMES.iter().map(|f| hdr.iter().position(|h| h == f).expect("feature column")).collect();
+            for l in lines.take(n) {
+                let c: Vec<&str> = l.split(',').collect();
+                let x: Vec<f32> = idx.iter().map(|i| c[*i].parse().unwrap_or(f32::NAN)).collect();
+                println!("{:.6}", g.predict(&x));
+            }
+            Ok(())
+        }
+        Cmd::Mayhem { data, out } => mayhem(data, out),
+        Cmd::Features { data, out, stake, stress, max_age_s, min_progress, max_progress, from_slot, to_slot } => export_features(data, out, stake, stress, (max_age_s, min_progress, max_progress), from_slot, to_slot),
         Cmd::Sweep { data, out, from_slot, to_slot } => sweep(data, out, from_slot, to_slot),
-        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot } => {
+        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot, flow_model, flow_label, flow_threshold } => {
             let mut cfg: BrainCfg = match config {
                 Some(p) => toml::from_str(&fs::read_to_string(p)?)?,
                 None => BrainCfg::default(),
@@ -84,6 +145,16 @@ fn main() -> Result<()> {
             }
             if no_mayhem {
                 cfg.shadow_mayhem = false;
+            }
+            if let Some(m) = flow_model {
+                cfg.flow.enabled = true;
+                cfg.flow.model_path = m;
+            }
+            if let Some(l) = flow_label {
+                cfg.flow.label = l;
+            }
+            if let Some(t) = flow_threshold {
+                cfg.flow.threshold = t;
             }
             if dump_config {
                 println!("{}", toml::to_string_pretty(&cfg)?);
@@ -281,8 +352,14 @@ fn agg(mut v: Vec<f64>) -> Agg {
 fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg, from_slot: u64, to_slot: u64) -> Result<()> {
     fs::create_dir_all(&out)?;
     fs::write(out.join("config.toml"), toml::to_string_pretty(&cfg)?)?;
-    let names: Vec<String> = cfg.variants.iter().map(|v| v.name.clone()).collect();
+    let flow = cfg.flow.clone();
     let mut brain = Brain::new(cfg);
+    if flow.enabled {
+        let g = ucore::gbm::Gbm::load(&flow.model_path, &flow.label)?;
+        println!("flow model {} ({} trees), label {}, threshold {}", flow.model_path, g.n_trees(), flow.label, flow.threshold);
+        brain.attach_flow_model(g)?;
+    }
+    let names: Vec<String> = brain.cfg.variants.iter().map(|v| v.name.clone()).collect();
     let t0 = std::time::Instant::now();
     let mut n_ev = 0u64;
     let (mut first_t, mut last_t) = (i64::MAX, 0i64);
@@ -661,5 +738,90 @@ fn sweep(data: PathBuf, out: PathBuf, from_slot: u64, to_slot: u64) -> Result<()
     s += "\nTune on the training window only; confirm the chosen row once on held-out days.\n";
     fs::write(out.join("sweep.md"), &s)?;
     println!("{s}");
+    Ok(())
+}
+
+fn export_features(data: PathBuf, out: PathBuf, stake: u64, stress: u32, win: (u64, f64, f64), from_slot: u64, to_slot: u64) -> Result<()> {
+    use ucore::flowsim::FlowSim;
+    let mut sim = FlowSim::new(stake, LatencyModel::stressed(stress));
+    sim.max_age_slots = ucore::pump::secs(win.0);
+    sim.min_progress = win.1;
+    sim.max_progress = win.2;
+    let names: Vec<String> = sim.labels.iter().map(|l| l.name.clone()).collect();
+    let mut w = std::io::BufWriter::new(fs::File::create(&out)?);
+    write!(w, "time,slot,mint")?;
+    for n in ucore::flow::FEATURE_NAMES {
+        write!(w, ",{n}")?;
+    }
+    for n in &names {
+        write!(w, ",r_{n},fx_{n},ex_{n},fe_{n}")?;
+    }
+    writeln!(w)?;
+    let mut rows = 0u64;
+    let t0 = std::time::Instant::now();
+    for blk in StoreReader::open(&data)? {
+        let bs = blk.last().map(|e| e.slot()).unwrap_or(0);
+        if bs < from_slot || bs >= to_slot {
+            continue;
+        }
+        for e in &blk {
+            sim.on_event(e);
+        }
+        for r in sim.out.drain(..) {
+            write!(w, "{},{},{}", r.time, r.slot, r.mint)?;
+            for x in &r.feats {
+                write!(w, ",{x:.5}")?;
+            }
+            for (ret, fx, ex, fe) in &r.res {
+                write!(w, ",{},{fx},{ex},{}", f(*ret), *fe as u8)?;
+            }
+            writeln!(w)?;
+            rows += 1;
+        }
+    }
+    println!("wrote {rows} decision rows to {} in {:.1}s", out.display(), t0.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// Per-trade dump for mayhem coins with the "jump" (unexplained reserve change since the
+/// previous trade) so the agent's behaviour can be studied.
+fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
+    let mut last: FxHashMap<Pk, (Curve, u64, i64)> = FxHashMap::default();
+    let mut created: FxHashMap<Pk, (u64, Pk)> = FxHashMap::default();
+    let mut w = std::io::BufWriter::new(fs::File::create(&out)?);
+    writeln!(w, "slot,tx,time,mint,age_slots,user,user_on_curve,is_dev,is_buy,sol,tok,fee_bps,ix,pre_vsol,pre_vtok,post_vsol,post_vtok,prev_vsol,prev_vtok,jump_price_ratio,trade_price_ratio,slots_since_prev")?;
+    let mut n = 0u64;
+    for blk in StoreReader::open(&data)? {
+        for e in &blk {
+            match e {
+                Ev::Create(c) if c.mayhem => {
+                    created.insert(c.mint, (c.m.slot, c.user));
+                    last.insert(c.mint, (Curve { vsol: c.vsol, vtok: c.vtok, rsol: 0, rtok: c.rtok }, c.m.slot, c.m.block_time));
+                }
+                Ev::Trade(t) if t.mayhem => {
+                    let Some((c0, s0, _)) = last.get(&t.mint).copied() else { continue };
+                    let pre = if t.is_buy {
+                        Curve { vsol: t.vsol - t.sol, vtok: t.vtok + t.tok, rsol: 0, rtok: 0 }
+                    } else {
+                        Curve { vsol: t.vsol + t.sol, vtok: t.vtok - t.tok, rsol: 0, rtok: 0 }
+                    };
+                    let jump = pre.price() / c0.price();
+                    let post = Curve { vsol: t.vsol, vtok: t.vtok, rsol: t.rsol, rtok: t.rtok };
+                    let (cs, dev) = created.get(&t.mint).copied().unwrap_or((0, Pk::ZERO));
+                    writeln!(
+                        w,
+                        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{}",
+                        t.m.slot, t.m.tx_idx, t.m.block_time, t.mint, t.m.slot.saturating_sub(cs), t.user, t.user.is_on_curve() as u8, (t.user == dev) as u8,
+                        t.is_buy as u8, t.sol, t.tok, t.fee_bps, t.ix, pre.vsol, pre.vtok, t.vsol, t.vtok, c0.vsol, c0.vtok, jump,
+                        post.price() / pre.price(), t.m.slot.saturating_sub(s0)
+                    )?;
+                    last.insert(t.mint, (post, t.m.slot, t.m.block_time));
+                    n += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    println!("wrote {n} mayhem trades");
     Ok(())
 }

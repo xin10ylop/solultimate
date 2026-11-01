@@ -1,0 +1,436 @@
+mode = "Sim"
+real_trading = true
+operator_entries = false
+context_entries = false
+shadow_stake_lamports = 100000000
+shadow_mayhem = false
+buy_slip = 4.0
+sell_slip = 0.25
+dump_sell_slip = 0.6
+resolve_slots = 2843
+late_attr_slots = 0
+seed = 7
+static_hubs = []
+
+[flow]
+enabled = true
+model_path = "research/models/flow_pilot.json"
+label = "h60"
+threshold = 0.05
+min_age_s = 2
+max_age_s = 3600
+min_progress = 0.3
+max_progress = 0.97
+eval_every_s = 1
+
+[gate]
+min_n = 6
+min_lcb = 0.03
+z = 1.0
+prior_n = 4.0
+min_win_rate = 0.35
+recent_k = 4
+min_recent_mean = 0.0
+max_consec_losses = 4
+lookback_slots = 2866346
+default_variant = 3
+first_candle_mult = 1.35
+
+[ctx_gate]
+min_n = 25
+min_lcb = 0.03
+z = 1.64
+prior_n = 10.0
+min_win_rate = 0.4
+recent_k = 10
+min_recent_mean = 0.0
+max_consec_losses = 8
+lookback_slots = 2866346
+default_variant = 3
+first_candle_mult = 1.35
+
+[dump]
+insider_min_lamports = 250000000
+insider_min_frac_rsol = 0.04
+nonbuyer_min_lamports = 100000000
+big_sell_min_lamports = 500000000
+big_sell_frac_rsol = 0.12
+consolidation_frac_supply = 0.12
+operator_min_lamports = 100000000
+
+[latency]
+p_same_slot = 0.4666666666666667
+same_slot_between = [
+    [
+    2,
+    0.12,
+],
+    [
+    3,
+    0.18,
+],
+    [
+    4,
+    0.22,
+],
+    [
+    5,
+    0.12,
+],
+    [
+    6,
+    0.1,
+],
+    [
+    8,
+    0.1,
+],
+    [
+    10,
+    0.08,
+],
+    [
+    13,
+    0.08,
+],
+]
+next_slot_ahead = [
+    [
+    0,
+    0.55,
+],
+    [
+    1,
+    0.25,
+],
+    [
+    2,
+    0.12,
+],
+    [
+    4,
+    0.08,
+],
+]
+extra_slots = 0
+
+[costs]
+base_fee = 5000
+buy_cu_limit = 120000
+buy_cu_price = 3000000
+buy_tip = 1000000
+sell_cu_limit = 100000
+sell_cu_price = 2000000
+sell_tip = 1000000
+
+[risk]
+bankroll_lamports = 5000000000
+stake_lamports = 100000000
+max_stake_frac = 0.05
+max_open = 3
+daily_loss_limit_lamports = 500000000
+max_consec_losses = 5
+pause_slots_after_streak = 51184
+allow_mayhem = false
+default_max_entry_mcap = 80.0
+
+[[variants]]
+name = "t2s"
+entry = "Create"
+tp = []
+sl = -0.6
+sl_arm_slots = 0
+max_hold_slots = 9
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "scalp40"
+entry = "Create"
+tp = [[
+    0.4,
+    1.0,
+]]
+sl = -0.25
+sl_arm_slots = 0
+max_hold_slots = 28
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "tp70"
+entry = "Create"
+tp = [[
+    0.7,
+    1.0,
+]]
+sl = -0.3
+sl_arm_slots = 0
+max_hold_slots = 75
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "tp100"
+entry = "Create"
+tp = [[
+    1.0,
+    1.0,
+]]
+sl = -0.35
+sl_arm_slots = 0
+max_hold_slots = 142
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "tp150"
+entry = "Create"
+tp = [[
+    1.5,
+    1.0,
+]]
+sl = -0.4
+sl_arm_slots = 0
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "tp100_raw"
+entry = "Create"
+tp = [[
+    1.0,
+    1.0,
+]]
+sl = -0.4
+sl_arm_slots = 0
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "tp200_raw"
+entry = "Create"
+tp = [[
+    2.0,
+    1.0,
+]]
+sl = -0.5
+sl_arm_slots = 0
+max_hold_slots = 568
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "trail60"
+entry = "Create"
+tp = [[
+    1.5,
+    1.0,
+]]
+sl = -0.35
+sl_arm_slots = 0
+trail = [
+    0.6,
+    0.25,
+]
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "ladder"
+entry = "Create"
+tp = [
+    [
+    0.6,
+    0.5,
+],
+    [
+    1.5,
+    0.5,
+],
+]
+sl = -0.35
+sl_arm_slots = 0
+trail = [
+    0.6,
+    0.3,
+]
+max_hold_slots = 426
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "clock30"
+entry = "Create"
+tp = [[
+    2.0,
+    1.0,
+]]
+sl = -0.4
+sl_arm_slots = 0
+max_hold_slots = 568
+idle_slots = 94
+on_dump = "Hard"
+dump_clock_q = 0.3
+
+[[variants]]
+name = "tp70_all"
+entry = "Create"
+tp = [[
+    0.7,
+    1.0,
+]]
+sl = -0.3
+sl_arm_slots = 0
+max_hold_slots = 75
+idle_slots = 94
+on_dump = "All"
+
+[[variants]]
+name = "t60s"
+entry = "Create"
+tp = []
+sl = -0.5
+sl_arm_slots = 0
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "b1_t2s"
+entry = "Block0End"
+tp = []
+sl = -0.6
+sl_arm_slots = 0
+max_hold_slots = 9
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "b1_scalp40"
+entry = "Block0End"
+tp = [[
+    0.4,
+    1.0,
+]]
+sl = -0.25
+sl_arm_slots = 0
+max_hold_slots = 28
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "b1_tp70"
+entry = "Block0End"
+tp = [[
+    0.7,
+    1.0,
+]]
+sl = -0.3
+sl_arm_slots = 0
+max_hold_slots = 75
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "b1_tp100"
+entry = "Block0End"
+tp = [[
+    1.0,
+    1.0,
+]]
+sl = -0.35
+sl_arm_slots = 0
+max_hold_slots = 142
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "b1_trail60"
+entry = "Block0End"
+tp = [[
+    1.5,
+    1.0,
+]]
+sl = -0.35
+sl_arm_slots = 0
+trail = [
+    0.6,
+    0.25,
+]
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "b1_t60s"
+entry = "Block0End"
+tp = []
+sl = -0.5
+sl_arm_slots = 0
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "ds_tp50"
+entry = "DevSell"
+tp = [[
+    0.5,
+    1.0,
+]]
+sl = -0.3
+sl_arm_slots = 0
+max_hold_slots = 142
+idle_slots = 94
+on_dump = "Hard"
+
+[[variants]]
+name = "ds_tp100"
+entry = "DevSell"
+tp = [[
+    1.0,
+    1.0,
+]]
+sl = -0.35
+sl_arm_slots = 0
+trail = [
+    0.5,
+    0.25,
+]
+max_hold_slots = 284
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "dp_tp40"
+entry = "AfterDump"
+tp = [[
+    0.4,
+    1.0,
+]]
+sl = -0.25
+sl_arm_slots = 0
+max_hold_slots = 142
+idle_slots = 94
+on_dump = "Off"
+
+[[variants]]
+name = "dp_tp100"
+entry = "AfterDump"
+tp = [[
+    1.0,
+    1.0,
+]]
+sl = -0.4
+sl_arm_slots = 0
+trail = [
+    0.5,
+    0.3,
+]
+max_hold_slots = 568
+idle_slots = 94
+on_dump = "Off"

@@ -137,8 +137,13 @@ impl OpStats {
             if xs.is_empty() {
                 continue;
             }
+            // rank playbooks by the same risk-adjusted bound the gate uses, so the
+            // operator's record favours consistent playbooks over lottery tickets
             let n = xs.len() as f64;
-            let m = (xs.iter().sum::<f64>() + cfg.prior_n * prior) / (n + cfg.prior_n);
+            let mean = xs.iter().sum::<f64>() / n;
+            let sd = if xs.len() > 1 { (xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt() } else { 0.5 };
+            let shrunk = (mean * n + cfg.prior_n * prior) / (n + cfg.prior_n);
+            let m = shrunk - cfg.z * sd / n.sqrt();
             if m > best.1 {
                 best = (v, m);
             }

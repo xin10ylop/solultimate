@@ -165,6 +165,11 @@ async fn main() -> Result<()> {
 
     // ---------------- warm-up: learn operators from recorded history
     let mut brain = Brain::new(cfg.brain.clone());
+    if brain.cfg.flow.enabled {
+        let g = ucore::gbm::Gbm::load(&brain.cfg.flow.model_path, &brain.cfg.flow.label)?;
+        tracing::info!("flow model loaded: {} trees, label {}, threshold {}", g.n_trees(), brain.cfg.flow.label, brain.cfg.flow.threshold);
+        brain.attach_flow_model(g)?;
+    }
     brain.cfg.mode = ExecMode::Sim;
     let t0 = Instant::now();
     let mut n = 0u64;
