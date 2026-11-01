@@ -163,3 +163,22 @@ from 4,332 live agent transactions and a full 10-minute window; scripts in `rese
   value to capture by buying out the curve (best case across 2,604 coins: 0.04 SOL).
 
 Verdict: a program-set random walk with large jumps. Nothing predictable to trade.
+
+## 9. Operator "dry powder" (rejected)
+
+Hypothesis: wallets funded by a launch's operator funders (the dev's and create-slot buyers'
+funders, exchange-scale hubs excluded) that have not traded the coin yet are future buying power
+aimed at it. Measured at our realistic entry (two slots after the create), all three periods
+(`research/follow_money/drypowder.py`):
+
+| dry powder > 50 SOL | n | 60 s | 300 s |
+|---|---|---|---|
+| forward | 28 | +10.8% | +6.0% |
+| discovery | 400 | −3.2% | −14.8% |
+| holdout | 279 | −12.3% | −22.6% |
+
+Dry-powder wallets bought the coin later in only 1.3–2.1% of launches. The forward result was noise.
+
+PUMP buyback (checked as a scheduled flow): one authority sweeps all 8 buyback vaults about every
+2 minutes (≈ 884,000 SOL claimed in total), so buying is spread in small chunks against PUMP's deep
+liquidity. Negligible impact.

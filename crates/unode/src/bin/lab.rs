@@ -1127,6 +1127,8 @@ fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
     // pools.bin rows (92 bytes, quote mint id u32 appended): kind u8, pad u8, ev u16, slot u32, tx u32, pool u32, mint u32 (u32::MAX unknown),
     // user u32, signer u32, fee_bps u32, base u64, quote u64, base_res u64, quote_res u64, vq i64, fee u64, extra u64
     let mut pw = BufWriter::new(fs::File::create(out.join("pools.bin"))?);
+    // funds.bin rows (24 bytes): from u32, to u32, slot u32, tx u32, lamports u64
+    let mut fw = BufWriter::new(fs::File::create(out.join("funds.bin"))?);
     let mut np = 0u64;
     let mut base_slot = 0u64;
     let (mut nt, mut nc) = (0u64, 0u64);
@@ -1172,6 +1174,14 @@ fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
                     tw.write_all(&t.m.cu_limit.to_le_bytes())?;
                     nt += 1;
                 }
+                Ev::Fund(f) => {
+                    let a = id(&mut wallets, &mut wal_list, f.from);
+                    let b = id(&mut wallets, &mut wal_list, f.to);
+                    for v in [a, b, (f.m.slot - base_slot) as u32, f.m.tx_idx] {
+                        fw.write_all(&v.to_le_bytes())?;
+                    }
+                    fw.write_all(&f.lamports.to_le_bytes())?;
+                }
                 Ev::Pool(p) => {
                     let e = &p.e;
                     let kind = e.kind as u8;
@@ -1207,6 +1217,7 @@ fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
     cw.flush()?;
     kw.flush()?;
     pw.flush()?;
+    fw.flush()?;
     let mut s = String::new();
     for k in &mint_list {
         let _ = writeln!(s, "{k}");
