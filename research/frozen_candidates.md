@@ -11,3 +11,16 @@ exits on a 10-point giveback, stop loss −15%, max hold 15 s, idle exit 15 s).
 
 Success on the holdout = mean net per trade > +2% at 0.25 SOL, and positive in both halves
 of the holdout.
+
+## D: Launch-Structure Engine (union, one entry per coin, first trigger wins)
+
+| member | trigger | condition | exit |
+|---|---|---|---|
+| op_quality_create | end of create tx | operator has ≥ 3 resolved launches and ≥ 50% of them reached 2× after the first candle | hold 15 s, SL −15% |
+| rm_g0 strict | end of creator's bundle (same slot) | create-slot holders ≥ 50% of supply, ≥ 50% of create-slot buyers fresh (≤ 6 h), ≥ 2 buyers | trailing (arm +20%, give back 10), SL −15%, max 15 s |
+| rm_b0 broad | first-candle close | holders ≥ 30%, ≥ 50% fresh (≤ 2 h), ≥ 2 buyers | same trailing |
+| b0_bigbundle_lowcrowd | first-candle close | create-slot SOL ≥ 5, ≤ 1 non-fresh create-slot buyer | same trailing |
+| b0_fresh_bundle | first-candle close | ≥ 60% of ≥ 3 create-slot buyers fresh (≤ 2 h) | same trailing |
+
+Entry price limit: +100% over the decision price. Discovery (data/pilot, 25.6 h): 793 trades,
++3.9%/trade (halves +3.9% / +3.7%), 19/26 hours positive, 310 operators, +7.7 SOL at 0.25 SOL.
