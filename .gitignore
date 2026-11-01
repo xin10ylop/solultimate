@@ -6,3 +6,6 @@
 /reports/tmp
 /reports/dev
 /reports/eda*
+/reports/*
+!/reports/wf/
+!/reports/pilot/

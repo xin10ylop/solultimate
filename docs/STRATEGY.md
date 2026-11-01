@@ -58,7 +58,7 @@ latency included, walk-forward by hour). In short:
   +8.5% per trade at the top 2% of scores.
 * Big-bundle "edges" and in-sample model results are illusions. Mayhem coins bleed.
 
-## 1b. Wallet intelligence without copy trading
+## 2b. Wallet intelligence without copy trading
 
 The model may know *who* is behind a launch, but it never copies anyone's buys. The
 wallet-derived features (`how_linked`, `fund_kind`, `fund_sol`, `fund_age_s`,
