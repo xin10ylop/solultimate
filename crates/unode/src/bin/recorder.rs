@@ -28,6 +28,9 @@ struct Args {
     watch: String,
     #[arg(long, default_value_t = 9000)]
     rotate: u64,
+    /// Also stream and decode PumpSwap (graduated coins, boost buy-and-burn).
+    #[arg(long)]
+    amm: bool,
 }
 
 #[tokio::main]
@@ -35,7 +38,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive("info".parse()?)).init();
     let a = Args::parse();
     let watch: Vec<String> = a.watch.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
-    let mut dcfg = DecodeCfg::default();
+    let mut dcfg = DecodeCfg { decode_amm: a.amm, ..DecodeCfg::default() };
     for w in &watch {
         dcfg.watch.insert(w.parse()?);
     }
@@ -45,7 +48,7 @@ async fn main() -> Result<()> {
         commitment: "confirmed".into(),
         firehose: a.firehose,
         include_failed: true,
-        extra_accounts: watch.clone(),
+        extra_accounts: if a.amm { watch.iter().cloned().chain([ucore::amm::PUMP_AMM.to_b58()]).collect() } else { watch.clone() },
     };
     let (tx, mut rx) = mpsc::channel::<SourceMsg>(200_000);
     tokio::spawn(run_source(gcfg, tx));

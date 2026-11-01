@@ -25,7 +25,7 @@ pump.fun announcement**: the program has changed its trade interface several tim
 
 ```bash
 GRPC_ENDPOINT=https://... GRPC_X_TOKEN=... \
-  ./target/release/recorder --out data/live --firehose
+  ./target/release/recorder --out data/live --firehose --amm   # --amm: also PumpSwap (graduations, boost)
 ```
 
 * `--firehose` streams every non-vote transaction (~40–80 Mbit/s). It is what captures the
