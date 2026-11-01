@@ -36,6 +36,17 @@ enum Cmd {
         #[arg(long, default_value = "data/journal.jsonl")]
         journal: PathBuf,
     },
+    /// Run a grid of gate / latency settings over the same data in one pass.
+    Sweep {
+        #[arg(long)]
+        data: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        from_slot: u64,
+        #[arg(long, default_value_t = u64::MAX)]
+        to_slot: u64,
+    },
     Replay {
         #[arg(long)]
         data: PathBuf,
@@ -62,6 +73,7 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
         Cmd::Compare { journal } => compare(journal),
+        Cmd::Sweep { data, out, from_slot, to_slot } => sweep(data, out, from_slot, to_slot),
         Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot } => {
             let mut cfg: BrainCfg = match config {
                 Some(p) => toml::from_str(&fs::read_to_string(p)?)?,
@@ -91,6 +103,8 @@ fn check(data: PathBuf) -> Result<()> {
     let mut examples = Vec::new();
     let mut fee_bps_hist: FxHashMap<u32, u64> = FxHashMap::default();
     let mut bad_kind: FxHashMap<(bool, bool, u8), u64> = FxHashMap::default();
+    let (mut xfer_pda, mut xfer_big) = (0u64, 0u64);
+    let mut xfer_by_mint: FxHashMap<Pk, u64> = FxHashMap::default();
     let mut rd = StoreReader::open(&data)?;
     for blk in rd.by_ref() {
         for e in &blk {
@@ -141,7 +155,16 @@ fn check(data: PathBuf) -> Result<()> {
                     last.insert(t.mint, Curve { vsol: t.vsol, vtok: t.vtok, rsol: t.rsol, rtok: t.rtok });
                 }
                 Ev::Fund(_) => funds += 1,
-                Ev::TokXfer(_) => xfers += 1,
+                Ev::TokXfer(x) => {
+                    xfers += 1;
+                    if !x.from.is_on_curve() || !x.to.is_on_curve() {
+                        xfer_pda += 1;
+                    }
+                    if x.amount as f64 >= 0.12 * ucore::pump::TOKEN_SUPPLY as f64 {
+                        xfer_big += 1;
+                    }
+                    *xfer_by_mint.entry(x.mint).or_default() += 1;
+                }
                 Ev::Complete(_) => {}
             }
         }
@@ -159,6 +182,9 @@ fn check(data: PathBuf) -> Result<()> {
     for e in examples {
         println!("  mismatch: {e}");
     }
+    let mut top: Vec<_> = xfer_by_mint.into_iter().collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1));
+    println!("token transfers: {xfers}, touching a PDA/program account {xfer_pda}, ≥12% of supply {xfer_big}; top mints {:?}", &top[..top.len().min(3)]);
     println!("frames {} truncated {}", rd.frames_read, rd.truncated_frames);
     Ok(())
 }
@@ -554,5 +580,60 @@ fn write_operators(path: &PathBuf, brain: &mut Brain, names: &[String]) -> Resul
             syms.join(" ")
         )?;
     }
+    Ok(())
+}
+
+fn sweep(data: PathBuf, out: PathBuf, from_slot: u64, to_slot: u64) -> Result<()> {
+    fs::create_dir_all(&out)?;
+    let mut grid: Vec<(String, BrainCfg)> = Vec::new();
+    for &min_n in &[4usize, 6, 10] {
+        for &min_lcb in &[0.0f64, 0.03, 0.08] {
+            for &z in &[1.0f64, 1.64] {
+                for &stress in &[0u32, 1] {
+                    let mut c = BrainCfg::default();
+                    c.gate.min_n = min_n;
+                    c.gate.min_lcb = min_lcb;
+                    c.gate.z = z;
+                    if stress > 0 {
+                        c.latency = LatencyModel::stressed(stress);
+                    }
+                    grid.push((format!("n{min_n}_lcb{min_lcb}_z{z}_s{stress}"), c));
+                }
+            }
+        }
+    }
+    let mut brains: Vec<Brain> = grid.iter().map(|(_, c)| Brain::new(c.clone())).collect();
+    for blk in StoreReader::open(&data)? {
+        let bs = blk.last().map(|e| e.slot()).unwrap_or(0);
+        if bs < from_slot || bs >= to_slot {
+            continue;
+        }
+        for e in &blk {
+            for b in brains.iter_mut() {
+                b.on_event(e);
+            }
+        }
+    }
+    let mut res: Vec<(String, usize, f64, f64, f64, f64)> = Vec::new();
+    for ((name, _), b) in grid.iter().zip(brains.iter()) {
+        let filled: Vec<f64> = b.closed_real.iter().filter(|t| !t.failed_entry).map(|t| t.ret).collect();
+        let a = agg(filled.clone());
+        let pnl: f64 = b.closed_real.iter().map(|t| t.pnl as f64 / 1e9).sum();
+        let n = filled.len();
+        let mut rng = ucore::fill::Rng::new(99);
+        let mut boots: Vec<f64> = (0..1000)
+            .map(|_| if n == 0 { f64::NAN } else { (0..n).map(|_| filled[(rng.u64() % n as u64) as usize]).sum::<f64>() / n as f64 })
+            .collect();
+        boots.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+        res.push((name.clone(), n, a.mean, a.win, boots.get(25).copied().unwrap_or(f64::NAN), pnl));
+    }
+    res.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(std::cmp::Ordering::Equal));
+    let mut s = String::from("| config | trades | mean ret | win | boot 97.5% LB | PnL SOL |\n|---|---|---|---|---|---|\n");
+    for r in &res {
+        s += &format!("| {} | {} | {:.4} | {:.1}% | {:.4} | {:.4} |\n", r.0, r.1, r.2, 100.0 * r.3, r.4, r.5);
+    }
+    s += "\nTune on the training window only; confirm the chosen row once on held-out days.\n";
+    fs::write(out.join("sweep.md"), &s)?;
+    println!("{s}");
     Ok(())
 }

@@ -224,6 +224,9 @@ impl MintTracker {
     }
 
     pub fn on_xfer(&mut self, x: &TokXfer, cfg: &DumpCfg) -> Signals {
+        if self.completed || !x.from.is_on_curve() || !x.to.is_on_curve() {
+            return Signals::default();
+        }
         *self.holdings.entry(x.from).or_default() -= x.amount as i128;
         *self.holdings.entry(x.to).or_default() += x.amount as i128;
         let r = self.received.entry(x.to).or_default();

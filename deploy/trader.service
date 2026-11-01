@@ -1,0 +1,18 @@
+[Unit]
+Description=solultimate trader
+After=network-online.target recorder.service
+Wants=network-online.target
+
+[Service]
+User=solultimate
+WorkingDirectory=/opt/solultimate
+ExecStart=/opt/solultimate/target/release/trader --config /opt/solultimate/config/trader.toml
+# Do NOT auto-restart a live trader blindly: a crash loop could re-enter positions.
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=600
+StartLimitBurst=3
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target

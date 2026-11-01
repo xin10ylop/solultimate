@@ -272,6 +272,14 @@ impl Brain {
         self.positions.get(&id)
     }
 
+    /// Run decisions waiting for the end of their trigger transaction. The live trader calls
+    /// this after each transaction so a decision never waits for the next stream message.
+    pub fn flush_decisions(&mut self) {
+        for (mint, slot, txi, stage) in std::mem::take(&mut self.pending_decisions) {
+            self.decide(mint, slot, txi, stage);
+        }
+    }
+
     pub fn on_event(&mut self, ev: &Ev) {
         if !self.pending_decisions.is_empty() {
             let (s, t, _) = ev.order_key();
@@ -885,6 +893,30 @@ impl Brain {
             p.fixed_costs += fixed_cost;
         }
     }
+    /// Reconcile a live position with the on-chain token balance (after missed/failed sells).
+    pub fn on_live_reconcile(&mut self, pos: u64, onchain_tokens: u64, slot: u64) {
+        let Some(p) = self.positions.get(&pos) else { return };
+        let mint = p.mint;
+        let (curve, fee) = match self.mints.get(&mint) {
+            Some(m) => (m.curve, m.fee_bps),
+            None => (crate::curve::Curve::initial(), 125),
+        };
+        if let Some(p) = self.positions.get_mut(&pos) {
+            p.pending = None;
+            if onchain_tokens == 0 {
+                // the sell landed but we never saw it: book it at the current curve value
+                let est = p.mark(&curve, fee);
+                p.proceeds += est;
+                p.tokens = 0;
+                p.state = PosState::Closed;
+                p.exit_reason = "reconciled";
+                p.close_slot = slot;
+            } else {
+                p.tokens = onchain_tokens.min(p.tokens.max(onchain_tokens));
+            }
+        }
+    }
+
     /// Emergency: request exit of every real position.
     pub fn panic_sell_all(&mut self, reason: &'static str) {
         let cx = Self::exec_ctx(&self.cfg);

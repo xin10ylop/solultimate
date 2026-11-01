@@ -223,6 +223,12 @@ async fn main() -> Result<()> {
     tokio::spawn(run_source(gcfg, src_tx));
     // sent signatures come back from the executor tasks
     let (sent_tx, mut sent_rx) = mpsc::unbounded_channel::<(Sig, Inflight)>();
+    // (position, on-chain token balance) from reconciliation checks
+    let (recon_tx, mut recon_rx) = mpsc::unbounded_channel::<(u64, u64)>();
+    let mut sell_attempts: FxHashMap<u64, u32> = FxHashMap::default();
+    // fully sold token accounts whose rent (~0.002 SOL each) we reclaim in batches
+    let mut empty_atas: Vec<(Pk, Pk)> = Vec::new();
+    let mut last_reclaim = Instant::now();
 
     let dcfg = DecodeCfg::default();
     let mut dst = DecodeState::default();
@@ -244,6 +250,15 @@ async fn main() -> Result<()> {
                 if let Some((sig, inf)) = s { inflight.insert(sig, inf); }
                 continue;
             }
+            r = recon_rx.recv() => {
+                if let Some((pos, bal)) = r {
+                    tracing::warn!("reconcile position {pos}: on-chain balance {bal}");
+                    journal.log("reconcile", serde_json::json!({"pos": pos, "balance": bal}));
+                    brain.on_live_reconcile(pos, bal, cur_slot);
+                    sell_attempts.remove(&pos);
+                }
+                continue;
+            }
             _ = tokio::time::sleep(Duration::from_millis(250)) => None,
         };
         if let Some(m) = msg {
@@ -258,7 +273,14 @@ async fn main() -> Result<()> {
                         if tv.failed {
                             match inf.side {
                                 Side::Buy => brain.on_live_buy_failed(inf.pos, tv.slot, fixed),
-                                Side::Sell => brain.on_live_sell_failed(inf.pos, fixed),
+                                Side::Sell => {
+                                    brain.on_live_sell_failed(inf.pos, fixed);
+                                    let n = sell_attempts.entry(inf.pos).or_default();
+                                    *n += 1;
+                                    if *n >= 3 {
+                                        spawn_reconcile(&rpc, &brain, inf.pos, wallet, recon_tx.clone());
+                                    }
+                                }
                             }
                             journal.log("tx_failed", serde_json::json!({"pos": inf.pos, "sig": tv.sig.to_b58(), "side": format!("{:?}", inf.side)}));
                         } else {
@@ -274,6 +296,11 @@ async fn main() -> Result<()> {
                                             telegram(&cfg, &http, format!("BUY {} cost {:.4} SOL", t.mint, (t.sol + t.fee) as f64 / 1e9)).await;
                                         } else {
                                             brain.on_live_sell_fill(inf.pos, t.tok, t.sol.saturating_sub(t.fee), tv.slot, fixed);
+                                            sell_attempts.remove(&inf.pos);
+                                            if brain.position(inf.pos).map(|p| p.tokens == 0).unwrap_or(true) {
+                                                let tp = brain.token_program(&t.mint).unwrap_or(ucore::pump::TOKEN_2022);
+                                                empty_atas.push((t.mint, tp));
+                                            }
                                             journal.log("sell_fill", serde_json::json!({"pos": inf.pos, "mint": t.mint.to_b58(), "out": t.sol.saturating_sub(t.fee), "tokens": t.tok}));
                                         }
                                     }
@@ -291,7 +318,8 @@ async fn main() -> Result<()> {
                             for e in &tmp {
                                 if let Ev::Trade(t) = e {
                                     if Some(t.user) == wallet && t.is_buy {
-                                        brain.intents.push(Intent::Sell { pos: 0, mint: t.mint, tokens: t.tok, min_lamports: 0, reason: "orphan".into(), urgent: true });
+                                        let min = brain.mints.get(&t.mint).map(|m| m.curve.sell(t.tok, m.fee_bps).0 / 2).unwrap_or(0);
+                                        brain.intents.push(Intent::Sell { pos: 0, mint: t.mint, tokens: t.tok, min_lamports: min, reason: "orphan".into(), urgent: true });
                                     }
                                 }
                             }
@@ -302,6 +330,7 @@ async fn main() -> Result<()> {
                     for e in &evs {
                         brain.on_event(e);
                     }
+                    brain.flush_decisions();
                 }
                 SourceMsg::BlockMeta { slot, parent, block_time, tx_count } => {
                     cur_slot = cur_slot.max(slot);
@@ -315,7 +344,14 @@ async fn main() -> Result<()> {
                                 brain.on_live_buy_failed(inf.pos, slot, 0);
                                 dead_buys.insert(s, inf.pos);
                             }
-                            Side::Sell => brain.on_live_sell_failed(inf.pos, 0),
+                            Side::Sell => {
+                                brain.on_live_sell_failed(inf.pos, 0);
+                                let n = sell_attempts.entry(inf.pos).or_default();
+                                *n += 1;
+                                if *n >= 3 {
+                                    spawn_reconcile(&rpc, &brain, inf.pos, wallet, recon_tx.clone());
+                                }
+                            }
                         }
                         journal.log("tx_expired", serde_json::json!({"pos": inf.pos, "sig": s.to_b58()}));
                     }
@@ -345,6 +381,32 @@ async fn main() -> Result<()> {
                 brain.panic_sell_all("kill_switch");
                 journal.log("kill", serde_json::json!({}));
                 telegram(&cfg, &http, "KILL SWITCH: exiting all positions".into()).await;
+            }
+            if !empty_atas.is_empty() && last_reclaim.elapsed() > Duration::from_secs(60) {
+                last_reclaim = Instant::now();
+                if let (Some(k), Some(w), Some(bh)) = (key.clone(), wallet, *blockhash.read().unwrap()) {
+                    let batch: Vec<(Pk, Pk)> = empty_atas.drain(..empty_atas.len().min(8)).collect();
+                    let rpc = rpc.clone();
+                    tokio::spawn(async move {
+                        let mut ixs = Vec::new();
+                        for (mint, tp) in &batch {
+                            let ata = Pk::ata(&w, mint, tp);
+                            // only close accounts that are really empty
+                            if let Ok(Some((d, _, _))) = rpc.account_data(&ata).await {
+                                if d.get(64..72).map(|b| u64::from_le_bytes(b.try_into().unwrap())) == Some(0) {
+                                    ixs.push(ucore::txbuild::close_account(&ata, &w, &w, tp));
+                                }
+                            }
+                        }
+                        if !ixs.is_empty() {
+                            let (tx, sig) = build_tx(&w, &ixs, &bh, Some(&k));
+                            match rpc.send(&tx).await {
+                                Ok(_) => tracing::info!("rent reclaim: closed {} token accounts ({sig})", ixs.len()),
+                                Err(e) => tracing::warn!("rent reclaim failed: {e}"),
+                            }
+                        }
+                    });
+                }
             }
             if killed && brain.real_open_count() == 0 && inflight.is_empty() {
                 tracing::info!("killed and flat: exiting");
@@ -383,10 +445,9 @@ async fn main() -> Result<()> {
                 }
                 Intent::Sell { pos, mint, tokens, min_lamports, urgent, .. } => {
                     let Some(tp) = brain.token_program(mint).or(Some(ucore::pump::TOKEN_2022)) else { continue };
-                    let full = brain.position(*pos).map(|p| p.tokens == *tokens).unwrap_or(true);
                     let tip = if *urgent { costs.sell_tip * 2 } else { costs.sell_tip };
                     let p = TxParams { cu_limit: costs.sell_cu_limit, cu_price: costs.sell_cu_price * if *urgent { 2 } else { 1 }, tip_lamports: tip, tip_account: Some(tips[tip_rr % tips.len()]) };
-                    (sell_ixs(&w, mint, &tp, *tokens, *min_lamports, full, &p, tip_rr), Inflight { pos: *pos, side: Side::Sell, sent_slot: cur_slot, tokens: *tokens, tip }, Side::Sell)
+                    (sell_ixs(&w, mint, &tp, *tokens, *min_lamports, false, &p, tip_rr), Inflight { pos: *pos, side: Side::Sell, sent_slot: cur_slot, tokens: *tokens, tip }, Side::Sell)
                 }
             };
             let (tx, sig) = build_tx(&w, &ixs, &bh, Some(key));
@@ -415,6 +476,23 @@ async fn main() -> Result<()> {
     journal.log("stop", serde_json::json!({}));
     let _ = anyhow!("");
     Ok(())
+}
+
+/// Check our token balance for a position's mint and report it back to the main loop.
+fn spawn_reconcile(rpc: &Rpc, brain: &Brain, pos: u64, wallet: Option<Pk>, tx: mpsc::UnboundedSender<(u64, u64)>) {
+    let (Some(w), Some(p)) = (wallet, brain.position(pos)) else { return };
+    let mint = p.mint;
+    let tp = brain.token_program(&mint).unwrap_or(ucore::pump::TOKEN_2022);
+    let rpc = rpc.clone();
+    tokio::spawn(async move {
+        let ata = Pk::ata(&w, &mint, &tp);
+        let bal = match rpc.account_data(&ata).await {
+            Ok(Some((d, _, _))) => d.get(64..72).map(|b| u64::from_le_bytes(b.try_into().unwrap())).unwrap_or(0),
+            Ok(None) => 0,
+            Err(_) => return,
+        };
+        let _ = tx.send((pos, bal));
+    });
 }
 
 #[cfg(test)]

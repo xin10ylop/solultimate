@@ -1,0 +1,18 @@
+[Unit]
+Description=solultimate recorder (Yellowstone gRPC -> event store)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=solultimate
+WorkingDirectory=/opt/solultimate
+EnvironmentFile=/etc/solultimate/recorder.env
+# recorder.env: GRPC_ENDPOINT=https://...  GRPC_X_TOKEN=...
+ExecStart=/opt/solultimate/target/release/recorder --out /opt/solultimate/data/live --firehose
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

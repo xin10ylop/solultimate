@@ -51,8 +51,10 @@ The replay is causal: every decision uses only information that existed at that 
 every operator's record is selection-honest. So the whole month after the first week is
 out-of-sample by construction. Still, tune nothing on the last 10 days:
 
-1. Tune on days 1–20 only (gate thresholds, variant family, dump thresholds).
-   `lab replay --to-slot <day20>` with different `--config` files.
+1. Tune on days 1–20 only (gate thresholds, variant family, dump thresholds):
+   `lab sweep --data data/live --out reports/sweep --to-slot <day20 slot>` runs a grid of
+   gate settings × latency stress in one pass. Other ideas: `lab replay --to-slot <day20>`
+   with different `--config` files.
 2. Freeze the config. Run days 21–30 once: `lab replay --from-slot 0` (the warm-up must
    include the earlier days, so replay everything and read only the day 21–30 rows).
 3. Stress the landing model: `--stress 1` (more next-slot, deeper queue) and `--stress 2`

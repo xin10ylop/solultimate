@@ -30,10 +30,11 @@ gRPC  ───────┤  (pump events, SOL     │   every launch, measur
 | `crates/ucore` | pure logic: pump.fun decoding, curve math, event store, latency/fill model, mint tracker + dump detectors, exit policies, operator book, brain, tx builder |
 | `crates/unode/src/bin/recorder.rs` | 24/7 Yellowstone recorder → event store (feature `grpc`) |
 | `crates/unode/src/bin/backfill.rs` | historical blocks over JSON-RPC → event store |
-| `crates/unode/src/bin/lab.rs` | `check` (decoder health), `replay` (causal backtest + reports + go-live checklist), `compare` (live vs model) |
+| `crates/unode/src/bin/lab.rs` | `check` (decoder health), `replay` (causal backtest → summary.md, launches.csv, operators.csv, trades.csv, go-live checklist), `sweep` (gate/latency grid in one pass), `compare` (live vs model) |
 | `crates/unode/src/bin/simcheck.rs` | simulates our buy/sell transactions on mainnet against the live program |
 | `crates/unode/src/bin/trader.rs` | live trader: paper / live, kill switch, risk limits (feature `grpc`) |
 | `config/` | `trader.example.toml`, `brain.default.toml` (every tunable, with defaults) |
+| `deploy/` | systemd units for recorder and trader |
 
 ## Quick start
 

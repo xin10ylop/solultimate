@@ -339,7 +339,8 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
         }
         let mut by_mint: FxHashMap<Pk, (Vec<(Pk, u64)>, Vec<(Pk, u64)>)> = FxHashMap::default();
         for ((mint, owner), d) in deltas {
-            if d == 0 || owner == Pk::ZERO {
+            // wallet-to-wallet moves only: pools, vaults and curves are PDAs (off-curve)
+            if d == 0 || owner == Pk::ZERO || !owner.is_on_curve() {
                 continue;
             }
             let e = by_mint.entry(mint).or_default();
