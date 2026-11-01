@@ -1,0 +1,58 @@
+# solultimate trader — copy to config/trader.toml and fill in.
+# Start with mode = "paper" (live stream, simulated fills, nothing is sent).
+
+mode = "paper"                       # "paper" | "live"
+wallet_keypair = "/etc/solultimate/hot-wallet.json"   # solana-keygen JSON, chmod 600
+rpc_url = "https://YOUR-TRITON-RPC.rpcpool.com/YOUR_TOKEN"
+grpc_endpoint = "https://YOUR-TRITON-GRPC.rpcpool.com"
+grpc_x_token = "YOUR_X_TOKEN"
+firehose = true                      # needed for fresh-wallet funding lineage
+
+# Replay recorded history first so the operator book is warm before the first trade.
+warmup_data = ["data/live"]
+
+kill_file = "STOP"                   # `touch STOP` → sell everything, no new entries, exit when flat
+max_wallet_lamports = 3_000_000_000  # refuse to start live if the hot wallet holds more (blast radius)
+max_stream_lag_ms = 1500             # no new entries while the feed is stale
+expire_slots = 10                    # buy not seen after N slots → treated as failed (late fills are sold)
+journal = "data/journal.jsonl"
+
+# Nozomi tip accounts are used round-robin; override here if Temporal publishes new ones.
+# tip_accounts = ["noz..."]
+
+[[senders]]
+name = "nozomi-fra"
+url = "http://fra2.nozomi.temporal.xyz/?c=YOUR_NOZOMI_KEY"
+ping_url = "http://fra2.nozomi.temporal.xyz/ping"
+
+# [[senders]]
+# name = "triton-rpc"
+# url = "https://YOUR-TRITON-RPC.rpcpool.com/YOUR_TOKEN"
+
+# telegram_bot_token = "123456:ABC..."
+# telegram_chat_id = "123456789"
+
+# Strategy / risk. Everything not set here uses config/brain.default.toml values
+# (print them with `lab replay --dump-config ...`).
+[brain]
+real_trading = true
+
+[brain.risk]
+bankroll_lamports = 2_000_000_000
+stake_lamports = 100_000_000         # canary: 0.1 SOL (fixed costs ≈2.6% of stake at this size)
+max_stake_frac = 0.05
+max_open = 2
+daily_loss_limit_lamports = 300_000_000
+max_consec_losses = 5
+pause_slots_after_streak = 27_000    # ~3 h
+allow_mayhem = false
+default_max_entry_mcap = 80.0
+
+[brain.costs]
+base_fee = 5000
+buy_cu_limit = 120000
+buy_cu_price = 3000000               # micro-lamports per CU
+buy_tip = 1000000                    # 0.001 SOL
+sell_cu_limit = 100000
+sell_cu_price = 2000000
+sell_tip = 1000000

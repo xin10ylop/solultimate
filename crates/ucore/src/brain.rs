@@ -2,12 +2,12 @@
 //! every launch, and opens real positions only for operators whose selection-honest track
 //! record clears the gate. Identical code runs in replay (Sim) and production (Live).
 
-use crate::book::{GateCfg, GateDecision, LaunchRec, OperatorBook};
+use crate::book::{GateCfg, GateDecision, LaunchRec, OpStats, OperatorBook};
 use crate::event::*;
 use crate::fill::{CostModel, LatencyModel};
 use crate::mint::{DumpCfg, MintTracker, Signals};
 use crate::pk::Pk;
-use crate::policy::{default_variants, ClosedTrade, ExecCtx, ExitRules, PosState, Position, Side};
+use crate::policy::{default_variants, ClosedTrade, Entry, ExecCtx, ExitRules, PosState, Position, Side};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,7 @@ pub enum ExecMode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RiskCfg {
     pub bankroll_lamports: u64,
     pub stake_lamports: u64,
@@ -50,12 +51,15 @@ impl Default for RiskCfg {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BrainCfg {
     pub mode: ExecMode,
     pub real_trading: bool,
     pub shadow_stake_lamports: u64,
     pub shadow_mayhem: bool,
     pub gate: GateCfg,
+    /// Gate for context cohorts (stricter: they are larger and noisier).
+    pub ctx_gate: GateCfg,
     pub dump: DumpCfg,
     pub latency: LatencyModel,
     pub costs: CostModel,
@@ -81,6 +85,7 @@ impl Default for BrainCfg {
             shadow_stake_lamports: 100_000_000,
             shadow_mayhem: false,
             gate: GateCfg::default(),
+            ctx_gate: GateCfg { min_n: 25, min_lcb: 0.03, z: 1.64, prior_n: 10.0, min_win_rate: 0.4, recent_k: 10, max_consec_losses: 8, ..GateCfg::default() },
             dump: DumpCfg::default(),
             latency: LatencyModel::default(),
             costs: CostModel::default(),
@@ -104,12 +109,27 @@ pub enum Intent {
     Sell { pos: u64, mint: Pk, tokens: u64, min_lamports: u64, reason: String, urgent: bool },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    Create,
+    Late,
+    Block0,
+    DevSell,
+    Dump,
+}
+
 #[derive(Clone, Debug)]
 struct Launch {
     op: u32,
     how: &'static str,
     chosen: usize,
     gate: Option<GateDecision>,
+    ctx_key: Option<u64>,
+    chosen_ctx: usize,
+    ctx_gate: Option<GateDecision>,
+    real_variant: Option<usize>,
+    devsell_done: bool,
+    dump_done: bool,
     shadows: Vec<u64>,
     shadow_results: Vec<f32>,
     real: Option<u64>,
@@ -156,6 +176,11 @@ pub struct LaunchRow {
     pub gate_n: usize,
     pub gate_lcb: f64,
     pub real_ret: f64,
+    pub real_variant: i64,
+    pub ctx_key: i64,
+    pub ctx_pass: bool,
+    pub ctx_n: usize,
+    pub ctx_lcb: f64,
     pub results: Vec<f32>,
 }
 
@@ -176,12 +201,14 @@ pub struct Counters {
 pub struct Brain {
     pub cfg: BrainCfg,
     pub book: OperatorBook,
+    /// Context cohorts: launch "types" (dev buy × bundle × crowd × funding kind).
+    pub ctx: FxHashMap<u64, OpStats>,
     pub mints: FxHashMap<Pk, MintTracker>,
     launches: FxHashMap<Pk, Launch>,
     positions: FxHashMap<u64, Position>,
     by_mint: FxHashMap<Pk, Vec<u64>>,
     next_id: u64,
-    pending_decisions: Vec<(Pk, u64, u32, bool)>,
+    pending_decisions: Vec<(Pk, u64, u32, Stage)>,
     pub prior: f64,
     pub now_slot: u64,
     pub now_time: i64,
@@ -215,6 +242,7 @@ impl Brain {
         Brain {
             cfg,
             book,
+            ctx: FxHashMap::default(),
             mints: FxHashMap::default(),
             launches: FxHashMap::default(),
             positions: FxHashMap::default(),
@@ -249,8 +277,8 @@ impl Brain {
             let (s, t, _) = ev.order_key();
             let (_, slot, txi, _) = self.pending_decisions[0];
             if s != slot || t != txi {
-                for (mint, slot, _, late) in std::mem::take(&mut self.pending_decisions) {
-                    self.decide(mint, slot, late);
+                for (mint, slot, txi, stage) in std::mem::take(&mut self.pending_decisions) {
+                    self.decide(mint, slot, txi, stage);
                 }
             }
         }
@@ -271,13 +299,13 @@ impl Brain {
             Ev::TokXfer(x) => {
                 if let Some(mt) = self.mints.get_mut(&x.mint) {
                     let s = mt.on_xfer(x, &self.cfg.dump);
-                    self.after_mint_event(x.mint, x.m.slot, s);
+                    self.after_mint_event(x.mint, x.m.slot, x.m.tx_idx, s);
                 }
             }
             Ev::Complete(c) => {
                 if let Some(mt) = self.mints.get_mut(&c.mint) {
                     mt.completed = true;
-                    self.after_mint_event(c.mint, c.m.slot, Signals::default());
+                    self.after_mint_event(c.mint, c.m.slot, c.m.tx_idx, Signals::default());
                 }
             }
             Ev::Block(b) => self.on_block(b),
@@ -310,10 +338,16 @@ impl Brain {
                 learned: false,
                 block0_buyers: Vec::new(),
                 real_ret: None,
+                ctx_key: None,
+                chosen_ctx: 0,
+                ctx_gate: None,
+                real_variant: None,
+                devsell_done: false,
+                dump_done: false,
             },
         );
         // decide once the whole create transaction (incl. the dev buy) has been applied
-        self.pending_decisions.push((c.mint, c.m.slot, c.m.tx_idx, false));
+        self.pending_decisions.push((c.mint, c.m.slot, c.m.tx_idx, Stage::Create));
     }
 
     fn exec_ctx(cfg: &BrainCfg) -> ExecCtx<'_> {
@@ -326,7 +360,26 @@ impl Brain {
         }
     }
 
-    fn decide(&mut self, mint: Pk, trigger_slot: u64, late: bool) {
+    fn ctx_key(mt: &MintTracker, fund_kind: u8) -> u64 {
+        let b = |x: f64, cuts: &[f64]| cuts.iter().filter(|c| x >= **c).count() as u64;
+        let dev = b(mt.dev_buy_sol as f64 / 1e9, &[0.3, 1.5, 5.0]);
+        let b0 = b(mt.block0.values().sum::<u64>() as f64 / 1e9, &[0.3, 2.0, 8.0]);
+        let crowd = b(mt.block0.len() as f64, &[2.0, 6.0]);
+        let fk = match fund_kind {
+            2 => 1,
+            3 => 2,
+            _ => 0,
+        };
+        dev | (b0 << 4) | (crowd << 8) | (fk << 12)
+    }
+
+    fn variants_for(&self, e: Entry) -> Vec<usize> {
+        self.cfg.variants.iter().enumerate().filter(|(_, v)| v.entry == e).map(|(i, _)| i).collect()
+    }
+
+    /// Decide at a trigger. Stage::Create = end of the create tx, Stage::Late = recurring
+    /// insider seen in the create slot, Stage::Block0 = end of the create slot.
+    fn decide(&mut self, mint: Pk, trigger_slot: u64, trigger_tx: u32, stage: Stage) {
         let Some(l) = self.launches.get(&mint).cloned() else { return };
         let nvar = self.cfg.variants.len();
         let prior = self.prior;
@@ -335,53 +388,74 @@ impl Brain {
             None => return,
         };
         let insiders = self.book.insider_wallets(l.op);
+        let dev = match self.mints.get(&mint) {
+            Some(m) => m.dev,
+            None => return,
+        };
+        let fund_kind = self.book.funding_kind(&dev);
+        let e1 = self.variants_for(Entry::Block0End);
+        let (ctx_key, ctx_gate) = if stage == Stage::Block0 {
+            let mt = self.mints.get(&mint).unwrap();
+            let k = Self::ctx_key(mt, fund_kind);
+            let g = self.ctx.get(&k).map(|c| c.gate_in(trigger_slot, &self.cfg.ctx_gate, prior, nvar, Some(&e1)));
+            (Some(k), g)
+        } else {
+            (None, None)
+        };
         let Some(mt) = self.mints.get_mut(&mint) else { return };
         mt.operator_wallets.extend(insiders);
         let curve = mt.curve;
         let fee_bps = mt.fee_bps;
         let mayhem = mt.mayhem;
         let create_slot = mt.create_slot;
-        let max_mcap = gate.max_mcap.unwrap_or(self.cfg.risk.default_max_entry_mcap);
+        let chosen_op = if gate.n > 0 { gate.variant } else { self.cfg.gate.default_variant };
+        let stage_entry = match stage {
+            Stage::Block0 => Entry::Block0End,
+            Stage::DevSell => Entry::DevSell,
+            Stage::Dump => Entry::AfterDump,
+            Stage::Create | Stage::Late => Entry::Create,
+        };
+
+        // which cohort (if any) wants a real entry at this stage
+        let mut want: Option<(usize, GateDecision, &'static str)> = None;
+        if gate.pass && self.cfg.variants[chosen_op].entry == stage_entry {
+            want = Some((chosen_op, gate.clone(), "operator"));
+        } else if let Some(g) = ctx_gate.as_ref().filter(|g| g.pass) {
+            want = Some((g.variant, g.clone(), "context"));
+        }
+        let max_mcap = want
+            .as_ref()
+            .and_then(|w| w.1.max_mcap)
+            .or(gate.max_mcap)
+            .unwrap_or(self.cfg.risk.default_max_entry_mcap);
         let max_price = max_mcap * 1e9 / crate::pump::TOKEN_SUPPLY as f64;
-        let chosen = if gate.n > 0 { gate.variant } else { self.cfg.gate.default_variant };
-        let clock = gate.clock_slots;
         let cx = Self::exec_ctx(&self.cfg);
 
-        // shadows: every variant, once per launch (at the create trigger)
+        // shadows for this stage's variants (once per launch and stage)
         let mut new_shadows = Vec::new();
-        if !late {
+        if stage != Stage::Late {
             for v in 0..nvar {
+                if self.cfg.variants[v].entry != stage_entry {
+                    continue;
+                }
                 let id = self.next_id;
                 self.next_id += 1;
-                let mut p = Position::new_entry(
-                    id,
-                    mint,
-                    v,
-                    true,
-                    self.cfg.shadow_stake_lamports,
-                    trigger_slot,
-                    &curve,
-                    fee_bps,
-                    Some(max_price),
-                    &cx,
-                    seed_of(&mint, v as u64, self.cfg.seed),
-                );
+                let mut p = Position::new_entry(id, mint, v, true, self.cfg.shadow_stake_lamports, trigger_slot, trigger_tx, &curve, fee_bps, Some(max_price), &cx, seed_of(&mint, v as u64, self.cfg.seed));
                 p.operator = Some(l.op);
                 if self.cfg.variants[v].dump_clock_q.is_some() {
-                    p.clock_deadline = clock.map(|c| create_slot + c.saturating_sub(1));
+                    p.clock_deadline = gate.clock_slots.map(|c| create_slot + c.saturating_sub(1));
                 }
                 new_shadows.push(p);
             }
         }
         // real entry
         let mut real = None;
-        if self.cfg.real_trading && gate.pass && l.real.is_none() {
+        let mut real_variant = None;
+        if let (true, Some((v, g, who))) = (self.cfg.real_trading && l.real.is_none(), want) {
             self.counters.gate_pass += 1;
+            *self.counters.gate_reasons.entry(format!("pass_{who}")).or_default() += 1;
             let stake = self.cfg.risk.stake_lamports.min((self.bankroll.max(0) as f64 * self.cfg.risk.max_stake_frac) as u64);
-            let op_busy = self
-                .open_real
-                .iter()
-                .any(|id| self.positions.get(id).and_then(|p| p.operator) == Some(l.op));
+            let op_busy = self.open_real.iter().any(|id| self.positions.get(id).and_then(|p| p.operator) == Some(l.op));
             let blocked = (mayhem && !self.cfg.risk.allow_mayhem)
                 || self.open_real.len() >= self.cfg.risk.max_open
                 || op_busy
@@ -393,22 +467,10 @@ impl Brain {
             } else {
                 let id = self.next_id;
                 self.next_id += 1;
-                let mut p = Position::new_entry(
-                    id,
-                    mint,
-                    chosen,
-                    false,
-                    stake,
-                    trigger_slot,
-                    &curve,
-                    fee_bps,
-                    Some(max_price),
-                    &cx,
-                    seed_of(&mint, chosen as u64, self.cfg.seed ^ 0xABCD),
-                );
+                let mut p = Position::new_entry(id, mint, v, false, stake, trigger_slot, trigger_tx, &curve, fee_bps, Some(max_price), &cx, seed_of(&mint, v as u64, self.cfg.seed ^ 0xABCD));
                 p.operator = Some(l.op);
-                if self.cfg.variants[chosen].dump_clock_q.is_some() {
-                    p.clock_deadline = clock.map(|c| create_slot + c.saturating_sub(1));
+                if self.cfg.variants[v].dump_clock_q.is_some() {
+                    p.clock_deadline = g.clock_slots.map(|c| create_slot + c.saturating_sub(1));
                 }
                 if self.cfg.mode == ExecMode::Live {
                     let o = p.pending.as_ref().unwrap();
@@ -418,13 +480,14 @@ impl Brain {
                         lamports: o.amount,
                         min_tokens: o.min_out,
                         fee_bps,
-                        reason: format!("op{} {} lcb={:.3} n={}", l.op, self.cfg.variants[chosen].name, gate.lcb, gate.n),
+                        reason: format!("{who} op{} {} lcb={:.3} n={}", l.op, self.cfg.variants[v].name, g.lcb, g.n),
                     });
                 }
                 self.counters.real_entries += 1;
+                real_variant = Some(v);
                 real = Some(p);
             }
-        } else if !gate.pass {
+        } else if stage == Stage::Create {
             *self.counters.gate_reasons.entry(gate.reason.to_string()).or_default() += 1;
         }
         let ids: Vec<u64> = new_shadows.iter().map(|p| p.id).collect();
@@ -440,12 +503,18 @@ impl Brain {
         }
         if let Some(lm) = self.launches.get_mut(&mint) {
             lm.shadows.extend(ids);
-            if lm.gate.is_none() || real_id.is_some() {
+            if stage == Stage::Create || stage == Stage::Late {
                 lm.gate = Some(gate);
+                lm.chosen = chosen_op;
             }
-            lm.chosen = chosen;
+            if stage == Stage::Block0 {
+                lm.ctx_key = ctx_key;
+                lm.chosen_ctx = ctx_gate.as_ref().map(|g| g.variant).unwrap_or(e1.first().copied().unwrap_or(0));
+                lm.ctx_gate = ctx_gate;
+            }
             if real_id.is_some() {
                 lm.real = real_id;
+                lm.real_variant = real_variant;
             }
         }
     }
@@ -461,7 +530,7 @@ impl Brain {
                     if self.cfg.mode == ExecMode::Live && !p.shadow {
                         continue;
                     }
-                    let lands = p.pending.as_mut().map(|o| o.lands_before_trade(t.m.slot)).unwrap_or(false);
+                    let lands = p.pending.as_mut().map(|o| o.lands_before_trade(t.m.slot, t.m.tx_idx)).unwrap_or(false);
                     if lands {
                         let was_entering = p.state == PosState::Entering;
                         p.fill(&mt.curve, mt.fee_bps, t.m.slot, &cx);
@@ -489,13 +558,28 @@ impl Brain {
                                 lm.how = "insider";
                             }
                             self.counters.late_attributed += 1;
-                            self.pending_decisions.push((t.mint, t.m.slot, t.m.tx_idx, true));
+                            self.pending_decisions.push((t.mint, t.m.slot, t.m.tx_idx, Stage::Late));
                         }
                     }
                 }
             }
         }
-        self.after_mint_event(t.mint, t.m.slot, s);
+        // lifecycle entry triggers (only while the launch is still learning)
+        if s.dev_sell || s.big_sell || s.consolidation || s.nonbuyer_sell || s.operator_sell {
+            if let Some(l) = self.launches.get_mut(&t.mint) {
+                if !l.learned && t.m.slot <= create_slot + 300 {
+                    if s.dev_sell && !l.devsell_done {
+                        l.devsell_done = true;
+                        self.pending_decisions.push((t.mint, t.m.slot, t.m.tx_idx, Stage::DevSell));
+                    }
+                    if (s.big_sell || s.consolidation || s.nonbuyer_sell || s.operator_sell) && !l.dump_done {
+                        l.dump_done = true;
+                        self.pending_decisions.push((t.mint, t.m.slot, t.m.tx_idx, Stage::Dump));
+                    }
+                }
+            }
+        }
+        self.after_mint_event(t.mint, t.m.slot, t.m.tx_idx, s);
     }
 
     fn book_union(&mut self, a: u32, b: u32) -> u32 {
@@ -503,14 +587,14 @@ impl Brain {
         self.book.merge_ops(a, b)
     }
 
-    fn after_mint_event(&mut self, mint: Pk, slot: u64, s: Signals) {
+    fn after_mint_event(&mut self, mint: Pk, slot: u64, tx: u32, s: Signals) {
         let Some(mt) = self.mints.get(&mint) else { return };
         let Some(ids) = self.by_mint.get(&mint) else { return };
         let cx = Self::exec_ctx(&self.cfg);
         for id in ids {
             if let Some(p) = self.positions.get_mut(id) {
                 let before = p.pending.is_some();
-                p.check_exits(&self.cfg.variants[p.variant], mt, slot, Some(s), &cx);
+                p.check_exits_at(&self.cfg.variants[p.variant], mt, slot, tx, Some(s), &cx);
                 if !before && p.pending.is_some() && self.cfg.mode == ExecMode::Live && !p.shadow {
                     let o = p.pending.as_ref().unwrap();
                     self.intents.push(Intent::Sell {
@@ -527,8 +611,8 @@ impl Brain {
     }
 
     fn on_block(&mut self, b: &BlockStat) {
-        for (mint, slot, _, late) in std::mem::take(&mut self.pending_decisions) {
-            self.decide(mint, slot, late);
+        for (mint, slot, txi, stage) in std::mem::take(&mut self.pending_decisions) {
+            self.decide(mint, slot, txi, stage);
         }
         self.now_slot = self.now_slot.max(b.slot);
         if b.block_time > 0 {
@@ -562,6 +646,15 @@ impl Brain {
             for mt in self.mints.values_mut() {
                 mt.on_block_end(b.slot);
             }
+        }
+        {
+            let e1: Vec<Pk> = self.mints.iter().filter(|(_, m)| m.create_slot == b.slot).map(|(k, _)| *k).collect();
+            for mint in e1 {
+                self.decide(mint, b.slot + 1, u32::MAX, Stage::Block0);
+            }
+        }
+        {
+            let cx = Self::exec_ctx(&self.cfg);
             for (mint, ids) in self.by_mint.iter() {
                 let Some(mt) = self.mints.get(mint) else { continue };
                 for id in ids {
@@ -624,7 +717,7 @@ impl Brain {
             let Some(mt) = self.mints.get(mint) else { continue };
             let age = mt.age_slots(b.slot);
             let open = self.by_mint.get(mint).map(|v| !v.is_empty()).unwrap_or(false);
-            if !l.learned && !l.shadows.is_empty() && !open && (mt.first_dump.is_some() || age >= 300) {
+            if !l.learned && !l.shadows.is_empty() && !open && age >= 300 {
                 learn.push(*mint);
             }
             if age >= self.cfg.resolve_slots && !open {
@@ -665,6 +758,16 @@ impl Brain {
             crowd: mt.crowd,
             block0_sol: mt.block0.values().sum::<u64>() as f32 / 1e9,
         };
+        if let Some(k) = l.ctx_key {
+            let mut r2 = rec.clone();
+            r2.honest = l.shadow_results.get(l.chosen_ctx).copied().unwrap_or(f32::NAN);
+            r2.chosen = l.chosen_ctx;
+            let c = self.ctx.entry(k).or_default();
+            c.launches.push(r2);
+            if c.launches.len() > 2000 {
+                c.launches.drain(..500);
+            }
+        }
         let op = l.op;
         self.book.record(op, rec, &buyers);
     }
@@ -716,6 +819,11 @@ impl Brain {
             gate_n: g.as_ref().map(|g| g.n).unwrap_or(0),
             gate_lcb: g.as_ref().map(|g| g.lcb).unwrap_or(f64::NAN),
             real_ret: l.real_ret.unwrap_or(f64::NAN),
+            real_variant: l.real_variant.map(|v| v as i64).unwrap_or(-1),
+            ctx_key: l.ctx_key.map(|k| k as i64).unwrap_or(-1),
+            ctx_pass: l.ctx_gate.as_ref().map(|g| g.pass).unwrap_or(false),
+            ctx_n: l.ctx_gate.as_ref().map(|g| g.n).unwrap_or(0),
+            ctx_lcb: l.ctx_gate.as_ref().map(|g| g.lcb).unwrap_or(f64::NAN),
             results: l.shadow_results.clone(),
         });
     }

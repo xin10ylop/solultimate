@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LatencyModel {
     pub p_same_slot: f64,
     /// Same-slot case: number of this coin's trades executed between the trigger and us.
@@ -82,6 +83,7 @@ impl LatencyModel {
 
 /// Fixed per-transaction costs (lamports).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CostModel {
     pub base_fee: u64,
     pub buy_cu_limit: u32,

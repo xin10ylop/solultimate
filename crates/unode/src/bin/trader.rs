@@ -351,6 +351,12 @@ async fn main() -> Result<()> {
                 break;
             }
         }
+        // resolved launches (incl. shadow predictions) → journal, for live-vs-model checks
+        for r in brain.rows.drain(..) {
+            if r.real_variant >= 0 || r.gate_pass || r.ctx_pass {
+                journal.log("launch", serde_json::to_value(&r)?);
+            }
+        }
         // closed real trades → journal
         for c in brain.closed_real.drain(..) {
             journal.log("closed", serde_json::to_value(&c)?);
@@ -409,4 +415,16 @@ async fn main() -> Result<()> {
     journal.log("stop", serde_json::json!({}));
     let _ = anyhow!("");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn example_config_parses() {
+        let s = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/trader.example.toml")).unwrap();
+        let c: super::TraderCfg = toml::from_str(&s).unwrap();
+        assert_eq!(c.brain.risk.stake_lamports, 100_000_000);
+        assert_eq!(c.brain.costs.buy_tip, 1_000_000);
+        assert!(!c.brain.variants.is_empty());
+    }
 }

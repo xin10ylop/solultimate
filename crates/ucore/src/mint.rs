@@ -56,6 +56,7 @@ impl Signals {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DumpCfg {
     pub insider_min_lamports: u64,
     pub insider_min_frac_rsol: f64,

@@ -30,9 +30,24 @@ impl DumpMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Entry {
+    /// React to the create transaction (dev wallet / funding known, bundle not yet seen).
+    #[default]
+    Create,
+    /// React to the end of the create slot ("first candle" closed, bundle visible).
+    Block0End,
+    /// React to the dev wallet's first sell (operators that re-pump after a fake dev exit).
+    DevSell,
+    /// React to the first hard dump signal (buy the crash for a rebound).
+    AfterDump,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExitRules {
     pub name: String,
+    #[serde(default)]
+    pub entry: Entry,
     /// Take-profit ladder: (gain on cost basis, fraction of the *initial* tokens to sell).
     pub tp: Vec<(f64, f64)>,
     /// Stop loss on position value (negative, e.g. -0.35).
@@ -56,6 +71,15 @@ pub fn default_variants() -> Vec<ExitRules> {
     use DumpMode::*;
     let v = |name: &str, tp: Vec<(f64, f64)>, sl: f64, trail: Option<(f64, f64)>, hold: u64, dump: DumpMode, clock: Option<f64>| ExitRules {
         name: name.into(),
+        entry: if name.starts_with("b1_") {
+            Entry::Block0End
+        } else if name.starts_with("ds_") {
+            Entry::DevSell
+        } else if name.starts_with("dp_") {
+            Entry::AfterDump
+        } else {
+            Entry::Create
+        },
         tp,
         sl,
         sl_arm_slots: 0,
@@ -78,6 +102,18 @@ pub fn default_variants() -> Vec<ExitRules> {
         v("clock30", vec![(2.00, 1.0)], -0.40, None, 300, Hard, Some(0.30)),
         v("tp70_all", vec![(0.70, 1.0)], -0.30, None, 40, All, None),
         v("t60s", vec![], -0.50, None, 150, Off, None),
+        // entries after the first block closed (bundle and first candle visible)
+        v("b1_t2s", vec![], -0.60, None, 5, Off, None),
+        v("b1_scalp40", vec![(0.40, 1.0)], -0.25, None, 15, Hard, None),
+        v("b1_tp70", vec![(0.70, 1.0)], -0.30, None, 40, Hard, None),
+        v("b1_tp100", vec![(1.00, 1.0)], -0.35, None, 75, Hard, None),
+        v("b1_trail60", vec![(1.50, 1.0)], -0.35, Some((0.60, 0.25)), 150, Hard, None),
+        v("b1_t60s", vec![], -0.50, None, 150, Off, None),
+        // lifecycle entries (latency-tolerant)
+        v("ds_tp50", vec![(0.50, 1.0)], -0.30, None, 75, Hard, None),
+        v("ds_tp100", vec![(1.00, 1.0)], -0.35, Some((0.5, 0.25)), 150, Off, None),
+        v("dp_tp40", vec![(0.40, 1.0)], -0.25, None, 75, Off, None),
+        v("dp_tp100", vec![(1.00, 1.0)], -0.40, Some((0.5, 0.3)), 300, Off, None),
     ]
 }
 
@@ -91,6 +127,10 @@ pub enum Side {
 pub struct PendingOrder {
     pub side: Side,
     pub trigger_slot: u64,
+    /// tx index of the trigger; consecutive transactions right after it that trade the same
+    /// coin are treated as one atomic group (Jito bundle) we can never land inside.
+    pub trigger_tx: u32,
+    pub group_open: bool,
     pub landing: Landing,
     pub seen: u32,
     /// Buy: lamports to spend (incl. fees). Sell: tokens to sell.
@@ -108,8 +148,16 @@ impl PendingOrder {
             Landing::Later { offset, .. } => self.trigger_slot + offset as u64,
         }
     }
-    /// Should we land *before* a trade of this coin at `slot`? Updates the seen counter.
-    pub fn lands_before_trade(&mut self, slot: u64) -> bool {
+    /// Should we land *before* a trade of this coin at (`slot`, `tx_idx`)? Updates counters.
+    pub fn lands_before_trade(&mut self, slot: u64, tx_idx: u32) -> bool {
+        if slot == self.trigger_slot && self.group_open {
+            if tx_idx <= self.trigger_tx + 1 {
+                // still inside the trigger's atomic group
+                self.trigger_tx = self.trigger_tx.max(tx_idx);
+                return false;
+            }
+            self.group_open = false;
+        }
         let ls = self.landing_slot();
         if slot < ls {
             return false;
@@ -212,6 +260,7 @@ impl Position {
         shadow: bool,
         stake: u64,
         trigger_slot: u64,
+        trigger_tx: u32,
         decision_curve: &Curve,
         fee_bps: u32,
         max_price: Option<f64>,
@@ -238,6 +287,8 @@ impl Position {
             pending: Some(PendingOrder {
                 side: Side::Buy,
                 trigger_slot,
+                trigger_tx,
+                group_open: true,
                 landing,
                 seen: 0,
                 amount: stake,
@@ -313,6 +364,7 @@ impl Position {
                     // retry immediately with a fresh landing and wider limit
                     o.attempts += 1;
                     o.trigger_slot = slot + 1;
+                    o.group_open = false;
                     o.landing = cx.latency.sample(&mut self.rng);
                     o.seen = 0;
                     let slip = (cx.dump_sell_slip + 0.1 * o.attempts as f64).min(0.98);
@@ -334,6 +386,10 @@ impl Position {
     }
 
     pub fn request_sell(&mut self, fraction_of_initial: f64, reason: &'static str, curve: &Curve, fee_bps: u32, slot: u64, dump: bool, cx: &ExecCtx) {
+        self.request_sell_at(fraction_of_initial, reason, curve, fee_bps, slot, u32::MAX, dump, cx)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn request_sell_at(&mut self, fraction_of_initial: f64, reason: &'static str, curve: &Curve, fee_bps: u32, slot: u64, tx: u32, dump: bool, cx: &ExecCtx) {
         if self.pending.is_some() || self.state != PosState::Open || self.tokens == 0 {
             return;
         }
@@ -344,6 +400,8 @@ impl Position {
         self.pending = Some(PendingOrder {
             side: Side::Sell,
             trigger_slot: slot,
+            trigger_tx: tx,
+            group_open: tx != u32::MAX,
             landing: cx.latency.sample(&mut self.rng),
             seen: 0,
             amount: amt,
@@ -355,6 +413,9 @@ impl Position {
 
     /// Evaluate exit rules after an event on this coin (or a block tick when `sig` is None).
     pub fn check_exits(&mut self, r: &ExitRules, mt: &MintTracker, slot: u64, sig: Option<Signals>, cx: &ExecCtx) {
+        self.check_exits_at(r, mt, slot, u32::MAX, sig, cx)
+    }
+    pub fn check_exits_at(&mut self, r: &ExitRules, mt: &MintTracker, slot: u64, tx: u32, sig: Option<Signals>, cx: &ExecCtx) {
         if self.state != PosState::Open || self.pending.is_some() {
             return;
         }
@@ -365,23 +426,23 @@ impl Position {
             self.peak_gain = g;
         }
         if mt.completed {
-            self.request_sell(1.0, "migrated", curve, fee, slot, true, cx);
+            self.request_sell_at(1.0, "migrated", curve, fee, slot, tx, true, cx);
             return;
         }
         if let Some(s) = sig {
             if r.on_dump.fires(&s) {
-                self.request_sell(1.0, s.label(), curve, fee, slot, true, cx);
+                self.request_sell_at(1.0, s.label(), curve, fee, slot, tx, true, cx);
                 return;
             }
         }
         let held = slot.saturating_sub(self.fill_slot);
         if held >= r.sl_arm_slots && g <= r.sl {
-            self.request_sell(1.0, "stop_loss", curve, fee, slot, true, cx);
+            self.request_sell_at(1.0, "stop_loss", curve, fee, slot, tx, true, cx);
             return;
         }
         if let Some((act, give)) = r.trail {
             if self.peak_gain >= act && g <= self.peak_gain - give {
-                self.request_sell(1.0, "trailing", curve, fee, slot, false, cx);
+                self.request_sell_at(1.0, "trailing", curve, fee, slot, tx, false, cx);
                 return;
             }
         }
@@ -389,21 +450,21 @@ impl Position {
             let frac = r.tp[self.tp_next].1;
             self.tp_next += 1;
             let last = self.tp_next == r.tp.len() && r.trail.is_none();
-            self.request_sell(if last { 1.0 } else { frac }, "take_profit", curve, fee, slot, false, cx);
+            self.request_sell_at(if last { 1.0 } else { frac }, "take_profit", curve, fee, slot, tx, false, cx);
             return;
         }
         if held >= r.max_hold_slots {
-            self.request_sell(1.0, "time_stop", curve, fee, slot, false, cx);
+            self.request_sell_at(1.0, "time_stop", curve, fee, slot, tx, false, cx);
             return;
         }
         if let Some(d) = self.clock_deadline {
             if slot >= d {
-                self.request_sell(1.0, "dump_clock", curve, fee, slot, false, cx);
+                self.request_sell_at(1.0, "dump_clock", curve, fee, slot, tx, false, cx);
                 return;
             }
         }
         if slot.saturating_sub(mt.last_trade_slot) >= r.idle_slots && held >= r.idle_slots {
-            self.request_sell(1.0, "idle", curve, fee, slot, false, cx);
+            self.request_sell_at(1.0, "idle", curve, fee, slot, tx, false, cx);
         }
     }
 

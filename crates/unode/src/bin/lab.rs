@@ -31,6 +31,11 @@ enum Cmd {
         #[arg(long)]
         data: PathBuf,
     },
+    /// Compare live fills with the model's shadow prediction for the same launch+variant.
+    Compare {
+        #[arg(long, default_value = "data/journal.jsonl")]
+        journal: PathBuf,
+    },
     Replay {
         #[arg(long)]
         data: PathBuf,
@@ -45,13 +50,19 @@ enum Cmd {
         /// Print the effective config as TOML and exit.
         #[arg(long)]
         dump_config: bool,
+        /// Only replay blocks with slot in [from_slot, to_slot).
+        #[arg(long, default_value_t = 0)]
+        from_slot: u64,
+        #[arg(long, default_value_t = u64::MAX)]
+        to_slot: u64,
     },
 }
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
-        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config } => {
+        Cmd::Compare { journal } => compare(journal),
+        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot } => {
             let mut cfg: BrainCfg = match config {
                 Some(p) => toml::from_str(&fs::read_to_string(p)?)?,
                 None => BrainCfg::default(),
@@ -66,7 +77,7 @@ fn main() -> Result<()> {
                 println!("{}", toml::to_string_pretty(&cfg)?);
                 return Ok(());
             }
-            replay(data, out, cfg)
+            replay(data, out, cfg, from_slot, to_slot)
         }
     }
 }
@@ -162,7 +173,7 @@ fn f(x: f64) -> String {
 
 fn write_launches(path: &PathBuf, rows: &[LaunchRow], names: &[String]) -> Result<()> {
     let mut w = std::io::BufWriter::new(fs::File::create(path)?);
-    write!(w, "mint,symbol,dev,op,op_launches_before,how,create_slot,create_time_utc,mayhem,block0_buyers,block0_sol,dev_buy_sol,crowd,block0_end_mcap_sol,entry_mcap_sol,p2s,p5s,p10s,p30s,p60s,p3m,p10m,first_dump_slots,dump_kind,max_buy_sol,n_trades,completed,chosen,honest,gate_pass,gate_reason,gate_n,gate_lcb,real_ret")?;
+    write!(w, "mint,symbol,dev,op,op_launches_before,how,create_slot,create_time_utc,mayhem,block0_buyers,block0_sol,dev_buy_sol,crowd,block0_end_mcap_sol,entry_mcap_sol,p2s,p5s,p10s,p30s,p60s,p3m,p10m,first_dump_slots,dump_kind,max_buy_sol,n_trades,completed,chosen,honest,gate_pass,gate_reason,gate_n,gate_lcb,real_ret,real_variant,ctx_key,ctx_pass,ctx_n,ctx_lcb")?;
     for n in names {
         write!(w, ",ret_{n}")?;
     }
@@ -171,11 +182,12 @@ fn write_launches(path: &PathBuf, rows: &[LaunchRow], names: &[String]) -> Resul
         let sym: String = r.symbol.chars().filter(|c| c.is_alphanumeric()).take(16).collect();
         write!(
             w,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             r.mint, sym, r.dev, r.op, r.op_launches_before, r.how, r.create_slot, r.create_time, r.mayhem, r.block0_buyers,
             f(r.block0_sol), f(r.dev_buy_sol), r.crowd, f(r.block0_end_mcap), f(r.ref_entry_mcap), f(r.p2s), f(r.p5s), f(r.p10s),
             f(r.p30s), f(r.p60s), f(r.p3m), f(r.p10m), r.first_dump_slots, r.dump_kind, f(r.max_buy_sol), r.n_trades, r.completed,
-            r.chosen, f(r.honest), r.gate_pass, r.gate_reason, r.gate_n, f(r.gate_lcb), f(r.real_ret)
+            r.chosen, f(r.honest), r.gate_pass, r.gate_reason, r.gate_n, f(r.gate_lcb), f(r.real_ret),
+            r.real_variant, r.ctx_key, r.ctx_pass, r.ctx_n, f(r.ctx_lcb)
         )?;
         for x in &r.results {
             write!(w, ",{}", f(*x as f64))?;
@@ -231,7 +243,7 @@ fn agg(mut v: Vec<f64>) -> Agg {
     Agg { n, mean: v.iter().sum::<f64>() / n as f64, win: v.iter().filter(|x| **x > 0.0).count() as f64 / n as f64, med: v[n / 2] }
 }
 
-fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg) -> Result<()> {
+fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg, from_slot: u64, to_slot: u64) -> Result<()> {
     fs::create_dir_all(&out)?;
     fs::write(out.join("config.toml"), toml::to_string_pretty(&cfg)?)?;
     let names: Vec<String> = cfg.variants.iter().map(|v| v.name.clone()).collect();
@@ -240,6 +252,10 @@ fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg) -> Result<()> {
     let mut n_ev = 0u64;
     let (mut first_t, mut last_t) = (i64::MAX, 0i64);
     for blk in StoreReader::open(&data)? {
+        let bs = blk.last().map(|e| e.slot()).unwrap_or(0);
+        if bs < from_slot || bs >= to_slot {
+            continue;
+        }
         for e in &blk {
             n_ev += 1;
             if let Ev::Block(b) = e {
@@ -254,6 +270,8 @@ fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg) -> Result<()> {
     let el = t0.elapsed().as_secs_f64();
     write_launches(&out.join("launches.csv"), &brain.rows, &names)?;
     write_trades(&out.join("trades.csv"), &brain.closed_real, &names)?;
+
+    write_operators(&out.join("operators.csv"), &mut brain, &names)?;
 
     // ---------------- summary
     let rows = &brain.rows;
@@ -349,6 +367,51 @@ fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg) -> Result<()> {
         writeln!(s, "| {d} | {n} | {r:.3} |")?;
     }
 
+    // go-live checklist (see docs/RUNBOOK.md §2)
+    {
+        let rets: Vec<f64> = filled.iter().map(|x| x.ret).collect();
+        let n = rets.len();
+        let mean = if n > 0 { rets.iter().sum::<f64>() / n as f64 } else { f64::NAN };
+        let mut rng = ucore::fill::Rng::new(12345);
+        let mut boots: Vec<f64> = (0..2000)
+            .map(|_| {
+                if n == 0 {
+                    return f64::NAN;
+                }
+                (0..n).map(|_| rets[(rng.u64() % n as u64) as usize]).sum::<f64>() / n as f64
+            })
+            .collect();
+        boots.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let lb = boots.get(50).copied().unwrap_or(f64::NAN);
+        let mut day_pnl: std::collections::BTreeMap<i64, f64> = Default::default();
+        let mut op_pnl: FxHashMap<u32, f64> = FxHashMap::default();
+        let slot_day = |slot: u64| -> i64 {
+            // map decision slot to UTC day using the rows' create times
+            rows.iter().find(|r| r.create_slot <= slot && slot - r.create_slot < 3000).map(|r| r.create_time / 86_400).unwrap_or(0)
+        };
+        for x in t {
+            *day_pnl.entry(slot_day(x.decision_slot)).or_default() += x.pnl as f64 / 1e9;
+            *op_pnl.entry(x.operator.unwrap_or(0)).or_default() += x.pnl as f64 / 1e9;
+        }
+        let total: f64 = day_pnl.values().sum();
+        let pos_days = day_pnl.values().filter(|v| **v > 0.0).count();
+        let max_day = day_pnl.values().cloned().fold(0.0f64, f64::max);
+        let max_op = op_pnl.values().cloned().fold(0.0f64, f64::max);
+        let share = |x: f64| if total > 0.0 { x / total } else { f64::NAN };
+        let bankroll = brain.cfg.risk.bankroll_lamports as f64 / 1e9;
+        let ok = |b: bool| if b { "PASS" } else { "FAIL" };
+        writeln!(s, "\n## Go-live checklist (thresholds from docs/RUNBOOK.md)\n")?;
+        writeln!(s, "| check | value | threshold | |\n|---|---|---|---|")?;
+        writeln!(s, "| real trades | {n} | ≥ 60 | {} |", ok(n >= 60))?;
+        writeln!(s, "| mean return / trade | {mean:.4} | > 0.04 | {} |", ok(mean > 0.04))?;
+        writeln!(s, "| bootstrap 95% lower bound | {lb:.4} | > 0 | {} |", ok(lb > 0.0))?;
+        writeln!(s, "| profitable days | {pos_days}/{} | ≥ 70% | {} |", day_pnl.len(), ok(!day_pnl.is_empty() && pos_days as f64 >= 0.7 * day_pnl.len() as f64))?;
+        writeln!(s, "| best day share of PnL | {:.2} | < 0.35 | {} |", share(max_day), ok(share(max_day) < 0.35))?;
+        writeln!(s, "| best operator share of PnL | {:.2} | < 0.30 | {} |", share(max_op), ok(share(max_op) < 0.30))?;
+        writeln!(s, "| max drawdown / bankroll | {:.3} | < 0.25 | {} |", mdd / bankroll, ok(mdd / bankroll < 0.25))?;
+        writeln!(s, "\nStress levels are separate runs (`--stress 1`, `--stress 2`).")?;
+    }
+
     // operator leaderboard
     writeln!(s, "\n## Operators with most resolved launches\n")?;
     writeln!(s, "| op | launches | devs | honest n | honest mean | win | gate |\n|---|---|---|---|---|---|---|")?;
@@ -366,5 +429,130 @@ fn replay(data: PathBuf, out: PathBuf, cfg: BrainCfg) -> Result<()> {
     }
     fs::write(out.join("summary.md"), &s)?;
     println!("{s}");
+    Ok(())
+}
+
+fn compare(journal: PathBuf) -> Result<()> {
+    use serde_json::Value;
+    let txt = fs::read_to_string(&journal)?;
+    let mut closed: FxHashMap<String, Value> = FxHashMap::default();
+    let mut launches: FxHashMap<String, Value> = FxHashMap::default();
+    let (mut failed, mut expired, mut orphans) = (0, 0, 0);
+    for line in txt.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        let k = v["kind"].as_str().unwrap_or("");
+        let x = &v["v"];
+        match k {
+            "closed" if x["shadow"] == false => {
+                closed.insert(x["mint"].as_str().unwrap_or("").to_string(), x.clone());
+            }
+            "launch" => {
+                launches.insert(x["mint"].as_str().unwrap_or("").to_string(), x.clone());
+            }
+            "tx_failed" => failed += 1,
+            "tx_expired" => expired += 1,
+            "orphan" => orphans += 1,
+            _ => {}
+        }
+    }
+    println!("real trades {} | failed txs {failed} | expired {expired} | orphans {orphans}", closed.len());
+    println!("{:<46} {:>9} {:>9} {:>9} {:>9}  reason", "mint", "real_ret", "model", "real_mc", "model_mc");
+    let (mut sr, mut sm, mut n) = (0.0, 0.0, 0);
+    for (mint, c) in &closed {
+        let real = c["ret"].as_f64().unwrap_or(f64::NAN);
+        let v = c["variant"].as_u64().unwrap_or(0) as usize;
+        let model = launches
+            .get(mint)
+            .and_then(|l| l["results"].as_array().and_then(|a| a.get(v)).and_then(|x| x.as_f64()))
+            .unwrap_or(f64::NAN);
+        let model_mc = launches.get(mint).and_then(|l| l["ref_entry_mcap"].as_f64()).unwrap_or(f64::NAN);
+        println!(
+            "{:<46} {:>9.3} {:>9.3} {:>9.2} {:>9.2}  {}",
+            mint,
+            real,
+            model,
+            c["entry_mcap"].as_f64().unwrap_or(f64::NAN),
+            model_mc,
+            c["exit_reason"].as_str().unwrap_or("")
+        );
+        if real.is_finite() && model.is_finite() {
+            sr += real;
+            sm += model;
+            n += 1;
+        }
+    }
+    if n > 0 {
+        println!("\nmean real {:.4} vs model {:.4} over {n} paired trades (gap {:+.4})", sr / n as f64, sm / n as f64, (sr - sm) / n as f64);
+        println!("A persistent negative gap means the landing/fee model is too optimistic: fix it before raising stakes.");
+    }
+    Ok(())
+}
+
+fn med(mut v: Vec<f64>) -> f64 {
+    v.retain(|x| x.is_finite());
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v[v.len() / 2]
+}
+
+/// One row per operator with ≥3 resolved launches: the automated "play sheet".
+fn write_operators(path: &PathBuf, brain: &mut Brain, names: &[String]) -> Result<()> {
+    let mut by_op: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
+    for (i, r) in brain.rows.iter().enumerate() {
+        let root = brain.book.find(r.op);
+        by_op.entry(root).or_default().push(i);
+    }
+    let mut ops: Vec<(u32, Vec<usize>)> = by_op.into_iter().filter(|(_, v)| v.len() >= 3).collect();
+    ops.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    let mut w = std::io::BufWriter::new(fs::File::create(path)?);
+    writeln!(w, "op,launches,devs,first_utc,last_utc,links,med_dev_buy_sol,med_block0_sol,med_block0_buyers,med_entry_mcap,p2s,p5s,p10s,p30s,p60s,p3m,honest_n,honest_mean,honest_win,best_variant,best_mean,best_win,example_symbols")?;
+    for (op, idx) in ops {
+        let rs: Vec<&LaunchRow> = idx.iter().map(|i| &brain.rows[*i]).collect();
+        let devs: std::collections::BTreeSet<&str> = rs.iter().map(|r| r.dev.as_str()).collect();
+        let mut links: FxHashMap<&str, usize> = FxHashMap::default();
+        for r in &rs {
+            *links.entry(r.how.as_str()).or_default() += 1;
+        }
+        let mut lk: Vec<_> = links.into_iter().collect();
+        lk.sort();
+        let lks: Vec<String> = lk.iter().map(|(k, v)| format!("{k}:{v}")).collect();
+        let hon = agg(rs.iter().map(|r| r.honest).collect());
+        let mut best = (0usize, f64::NEG_INFINITY, 0.0);
+        for v in 0..names.len() {
+            let a = agg(rs.iter().map(|r| r.results.get(v).copied().unwrap_or(f32::NAN) as f64).collect());
+            if a.n > 0 && a.mean > best.1 {
+                best = (v, a.mean, a.win);
+            }
+        }
+        let syms: Vec<String> = rs.iter().take(4).map(|r| r.symbol.chars().filter(|c| c.is_alphanumeric()).take(10).collect()).collect();
+        writeln!(
+            w,
+            "{op},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            rs.len(),
+            devs.len(),
+            rs.iter().map(|r| r.create_time).min().unwrap_or(0),
+            rs.iter().map(|r| r.create_time).max().unwrap_or(0),
+            lks.join(" "),
+            f(med(rs.iter().map(|r| r.dev_buy_sol).collect())),
+            f(med(rs.iter().map(|r| r.block0_sol).collect())),
+            f(med(rs.iter().map(|r| r.block0_buyers as f64).collect())),
+            f(med(rs.iter().map(|r| r.ref_entry_mcap).collect())),
+            f(med(rs.iter().map(|r| r.p2s).collect())),
+            f(med(rs.iter().map(|r| r.p5s).collect())),
+            f(med(rs.iter().map(|r| r.p10s).collect())),
+            f(med(rs.iter().map(|r| r.p30s).collect())),
+            f(med(rs.iter().map(|r| r.p60s).collect())),
+            f(med(rs.iter().map(|r| r.p3m).collect())),
+            hon.n,
+            f(hon.mean),
+            f(hon.win),
+            names[best.0],
+            f(best.1),
+            f(best.2),
+            syms.join(" ")
+        )?;
+    }
     Ok(())
 }

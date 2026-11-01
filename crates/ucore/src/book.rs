@@ -21,6 +21,7 @@ pub enum NodeKey {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GateCfg {
     /// Minimum resolved launches with an honest result.
     pub min_n: usize,
@@ -50,7 +51,7 @@ impl Default for GateCfg {
             min_lcb: 0.03,
             z: 1.0,
             prior_n: 4.0,
-            min_win_rate: 0.45,
+            min_win_rate: 0.35,
             recent_k: 4,
             min_recent_mean: 0.0,
             max_consec_losses: 4,
@@ -115,10 +116,18 @@ impl OpStats {
         self.launches.iter().filter(move |l| now.saturating_sub(l.slot) <= lookback)
     }
 
-    /// Variant with the best shrunk mean over recent launches.
+    /// Variant with the best shrunk mean over recent launches (among `allowed`, if given).
     pub fn best_variant(&self, now: u64, cfg: &GateCfg, prior: f64, nvar: usize) -> usize {
-        let mut best = (cfg.default_variant, f64::NEG_INFINITY);
+        self.best_variant_in(now, cfg, prior, nvar, None)
+    }
+    pub fn best_variant_in(&self, now: u64, cfg: &GateCfg, prior: f64, nvar: usize, allowed: Option<&[usize]>) -> usize {
+        let mut best = (allowed.and_then(|a| a.first().copied()).unwrap_or(cfg.default_variant), f64::NEG_INFINITY);
         for v in 0..nvar {
+            if let Some(a) = allowed {
+                if !a.contains(&v) {
+                    continue;
+                }
+            }
             let xs: Vec<f64> = self
                 .recent(now, cfg.lookback_slots)
                 .filter_map(|l| l.res.get(v).copied())
@@ -138,7 +147,10 @@ impl OpStats {
     }
 
     pub fn gate(&self, now: u64, cfg: &GateCfg, prior: f64, nvar: usize) -> GateDecision {
-        let variant = self.best_variant(now, cfg, prior, nvar);
+        self.gate_in(now, cfg, prior, nvar, None)
+    }
+    pub fn gate_in(&self, now: u64, cfg: &GateCfg, prior: f64, nvar: usize, allowed: Option<&[usize]>) -> GateDecision {
+        let variant = self.best_variant_in(now, cfg, prior, nvar, allowed);
         let hs: Vec<f64> = self
             .recent(now, cfg.lookback_slots)
             .map(|l| l.honest as f64)
@@ -392,6 +404,22 @@ impl OperatorBook {
         }
         s.last_slot = slot;
         (root, how)
+    }
+
+    /// How the dev wallet was funded: 0 unseen, 1 hub round amount, 2 hub non-round amount,
+    /// 3 non-hub sender (treasury / mother / previous dev).
+    pub fn funding_kind(&self, dev: &Pk) -> u8 {
+        match self.funding.get(dev) {
+            None => 0,
+            Some(f) if self.is_hub(&f.from) => {
+                if non_round(f.lamports) {
+                    2
+                } else {
+                    1
+                }
+            }
+            Some(_) => 3,
+        }
     }
 
     /// Operator root for an existing wallet, if it has one.
