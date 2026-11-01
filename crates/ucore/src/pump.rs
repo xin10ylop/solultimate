@@ -98,6 +98,11 @@ impl<'a> Rd<'a> {
     pub fn bool(&mut self) -> Option<bool> {
         self.u8().map(|v| v != 0)
     }
+    pub fn u16(&mut self) -> Option<u16> {
+        let s = self.d.get(self.o..self.o + 2)?;
+        self.o += 2;
+        Some(u16::from_le_bytes(s.try_into().ok()?))
+    }
     pub fn u32(&mut self) -> Option<u32> {
         let s = self.d.get(self.o..self.o + 4)?;
         self.o += 4;

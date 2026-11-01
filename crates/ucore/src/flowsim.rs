@@ -134,6 +134,7 @@ impl FlowSim {
                 self.check(c.mint, c.m.slot, c.m.tx_idx);
             }
             Ev::Block(b) => self.on_block(b),
+            Ev::Pool(_) => {}
             Ev::Fund(f) => {
                 if f.to_pre == 0 {
                     self.book.on_fund(f.from, f.to, f.lamports, f.m.slot);

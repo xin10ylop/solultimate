@@ -35,6 +35,9 @@ struct Args {
     /// Rotate segment files every N slots.
     #[arg(long, default_value_t = 9000)]
     rotate: u64,
+    /// Also decode PumpSwap events (graduated coins, boost buy-and-burn).
+    #[arg(long)]
+    amm: bool,
 }
 
 async fn rpc_slot(client: &reqwest::Client, url: &str) -> Result<u64> {
@@ -118,13 +121,14 @@ async fn main() -> Result<()> {
     }
 
     let mut writer = StoreWriter::new(&a.out, a.rotate)?;
-    let cfg = DecodeCfg::default();
+    let cfg = DecodeCfg { decode_amm: a.amm, ..DecodeCfg::default() };
     let mut st = DecodeState::default();
     let mut pending: BTreeMap<u64, Option<RpcBlock>> = BTreeMap::new();
     let mut next = start;
     let t0 = Instant::now();
     let (mut n_blocks, mut n_create, mut n_trade, mut n_fund, mut n_xfer, mut n_pump_failed) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     let mut non_pump_suffix = 0u64;
+    let mut n_pool = 0u64;
     while next < end {
         let Some((slot, b)) = rx.recv().await else { break };
         pending.insert(slot, b);
@@ -143,6 +147,7 @@ async fn main() -> Result<()> {
                         Ev::Fund(_) => n_fund += 1,
                         Ev::TokXfer(_) => n_xfer += 1,
                         Ev::Block(s) => n_pump_failed += s.pump_failed as u64,
+                        Ev::Pool(_) => n_pool += 1,
                         _ => {}
                     }
                 }
@@ -153,7 +158,7 @@ async fn main() -> Result<()> {
             if (next - start) % 1000 == 0 {
                 let el = t0.elapsed().as_secs_f64();
                 tracing::info!(
-                    "slot {next} ({:.1}%) {:.1} slots/s blocks={n_blocks} creates={n_create} trades={n_trade} funds={n_fund} tokxfers={n_xfer} pump_failed_tx={n_pump_failed} throttled={} non_pump_suffix_mints={non_pump_suffix}",
+                    "slot {next} ({:.1}%) {:.1} slots/s blocks={n_blocks} creates={n_create} trades={n_trade} funds={n_fund} tokxfers={n_xfer} pump_failed_tx={n_pump_failed} throttled={} non_pump_suffix_mints={non_pump_suffix} pool_events={n_pool}",
                     100.0 * (next - start) as f64 / (end - start) as f64,
                     (next - start) as f64 / el,
                     throttled.load(Ordering::Relaxed)

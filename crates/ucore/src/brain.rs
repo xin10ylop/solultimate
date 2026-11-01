@@ -569,6 +569,7 @@ impl Brain {
                 }
             }
             Ev::Block(b) => self.on_block(b),
+            Ev::Pool(_) => {}
         }
     }
 

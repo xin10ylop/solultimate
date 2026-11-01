@@ -131,6 +131,16 @@ pub enum Ev {
     Fund(Fund),
     TokXfer(TokXfer),
     Block(BlockStat),
+    /// PumpSwap event (appended last: older stores stay readable).
+    Pool(PoolEv),
+}
+
+/// PumpSwap event with tx meta. `mint` is resolved from the instruction accounts or the
+/// pool-creation event (default when unknown, e.g. multi-hop into a pool never seen).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PoolEv {
+    pub m: Meta,
+    pub e: crate::amm::RawPool,
 }
 
 impl Ev {
@@ -142,6 +152,7 @@ impl Ev {
             Ev::Fund(e) => e.m.slot,
             Ev::TokXfer(e) => e.m.slot,
             Ev::Block(b) => b.slot,
+            Ev::Pool(p) => p.m.slot,
         }
     }
     pub fn meta(&self) -> Option<&Meta> {
@@ -152,6 +163,7 @@ impl Ev {
             Ev::Fund(e) => Some(&e.m),
             Ev::TokXfer(e) => Some(&e.m),
             Ev::Block(_) => None,
+            Ev::Pool(p) => Some(&p.m),
         }
     }
     pub fn mint(&self) -> Option<Pk> {

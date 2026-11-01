@@ -1,4 +1,5 @@
 //! solultimate core: decoding, curve math, storage, strategy brain and simulator.
+pub mod amm;
 pub mod book;
 pub mod brain;
 pub mod curve;

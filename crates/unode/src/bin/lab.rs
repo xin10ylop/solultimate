@@ -73,6 +73,13 @@ enum Cmd {
         #[arg(long)]
         data: Vec<PathBuf>,
     },
+    /// Export the SOL-quoted trade tape as fixed-width binary records for research (numpy).
+    Tape {
+        #[arg(long)]
+        data: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Continuity check of the child-coin (pump-coin / USDC quoted) reconstruction.
     ChildCheck {
         #[arg(long)]
@@ -184,6 +191,7 @@ fn main() -> Result<()> {
         Cmd::Compare { journal } => compare(journal),
         Cmd::Mechanics { data } => mechanics(data),
         Cmd::ChildCheck { data } => child_check(data),
+        Cmd::Tape { data, out } => tape(data, out),
         Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long, market } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long), dump_sensitive, penalty, create_slip, live_real, market),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
@@ -323,7 +331,7 @@ fn check(data: PathBuf) -> Result<()> {
                     }
                     *xfer_by_mint.entry(x.mint).or_default() += 1;
                 }
-                Ev::Complete(_) => {}
+                Ev::Complete(_) | Ev::Pool(_) => {}
             }
         }
     }
@@ -1097,5 +1105,117 @@ fn child_check(data: PathBuf) -> Result<()> {
     if !qpl.is_empty() {
         println!("quote units per lamport: p10 {:.4} median {:.4} p90 {:.4}", qpl[qpl.len() / 10], qpl[qpl.len() / 2], qpl[qpl.len() * 9 / 10]);
     }
+    Ok(())
+}
+
+/// Binary tape for research. trades.bin rows (little endian, 88 bytes):
+/// mint u32, user u32, signer u32, slot u32 (offset from first slot), tx_idx u32, ev_idx u16,
+/// is_buy u8, flags u8 (1 mayhem, 2 sol_quote), sol u64, tok u64, vsol u64, vtok u64, fee u64,
+/// cu_price u64, tip u32 (lamports, saturating), shape u32, tx_fee u32, cu_limit u32.
+/// creates.bin rows (24 bytes): mint u32, dev u32, slot u32, tx_idx u32, flags u32 (1 mayhem, 2 sol_quote,
+/// 4 holder_reward), block_time u32. completes.bin: mint u32, slot u32. ids: mints.txt / wallets.txt.
+fn tape(data: PathBuf, out: PathBuf) -> Result<()> {
+    use std::io::BufWriter;
+    fs::create_dir_all(&out)?;
+    let mut mints: FxHashMap<Pk, u32> = FxHashMap::default();
+    let mut wallets: FxHashMap<Pk, u32> = FxHashMap::default();
+    let mut mint_list: Vec<Pk> = Vec::new();
+    let mut wal_list: Vec<Pk> = Vec::new();
+    let mut tw = BufWriter::new(fs::File::create(out.join("trades.bin"))?);
+    let mut cw = BufWriter::new(fs::File::create(out.join("creates.bin"))?);
+    let mut kw = BufWriter::new(fs::File::create(out.join("completes.bin"))?);
+    // pools.bin rows (88 bytes): kind u8, pad u8, ev u16, slot u32, tx u32, pool u32, mint u32 (u32::MAX unknown),
+    // user u32, signer u32, fee_bps u32, base u64, quote u64, base_res u64, quote_res u64, vq i64, fee u64, extra u64
+    let mut pw = BufWriter::new(fs::File::create(out.join("pools.bin"))?);
+    let mut np = 0u64;
+    let mut base_slot = 0u64;
+    let (mut nt, mut nc) = (0u64, 0u64);
+    fn id(map: &mut FxHashMap<Pk, u32>, list: &mut Vec<Pk>, k: Pk) -> u32 {
+        *map.entry(k).or_insert_with(|| {
+            list.push(k);
+            (list.len() - 1) as u32
+        })
+    }
+    let rd = StoreReader::open(&data)?;
+    for blk in rd {
+        for e in &blk {
+            if base_slot == 0 {
+                base_slot = e.slot();
+            }
+            match e {
+                Ev::Create(c) => {
+                    let m = id(&mut mints, &mut mint_list, c.mint);
+                    let d = id(&mut wallets, &mut wal_list, c.user);
+                    let sq = ucore::pump::is_sol_quote(&c.quote_mint);
+                    let fl = (c.mayhem as u32) | ((sq as u32) << 1) | ((c.holder_reward as u32) << 2);
+                    for v in [m, d, (c.m.slot - base_slot) as u32, c.m.tx_idx, fl, c.m.block_time as u32] {
+                        cw.write_all(&v.to_le_bytes())?;
+                    }
+                    nc += 1;
+                }
+                Ev::Trade(t) => {
+                    let m = id(&mut mints, &mut mint_list, t.mint);
+                    let u = id(&mut wallets, &mut wal_list, t.user);
+                    let s = id(&mut wallets, &mut wal_list, t.m.signer);
+                    for v in [m, u, s, (t.m.slot - base_slot) as u32, t.m.tx_idx] {
+                        tw.write_all(&v.to_le_bytes())?;
+                    }
+                    tw.write_all(&t.m.ev_idx.to_le_bytes())?;
+                    tw.write_all(&[t.is_buy as u8, (t.mayhem as u8) | ((t.sol_quote as u8) << 1)])?;
+                    for v in [t.sol, t.tok, t.vsol, t.vtok, t.fee, t.m.cu_price] {
+                        tw.write_all(&v.to_le_bytes())?;
+                    }
+                    tw.write_all(&(t.m.tip.min(u32::MAX as u64) as u32).to_le_bytes())?;
+                    tw.write_all(&t.m.shape.to_le_bytes())?;
+                    tw.write_all(&(t.m.tx_fee.min(u32::MAX as u64) as u32).to_le_bytes())?;
+                    tw.write_all(&t.m.cu_limit.to_le_bytes())?;
+                    nt += 1;
+                }
+                Ev::Pool(p) => {
+                    let e = &p.e;
+                    let kind = e.kind as u8;
+                    let pool = id(&mut mints, &mut mint_list, e.pool);
+                    let mint = if e.mint == Pk::default() { u32::MAX } else { id(&mut mints, &mut mint_list, e.mint) };
+                    let u = id(&mut wallets, &mut wal_list, e.user);
+                    let sg = id(&mut wallets, &mut wal_list, p.m.signer);
+                    pw.write_all(&[kind, 0])?;
+                    pw.write_all(&p.m.ev_idx.to_le_bytes())?;
+                    for v in [(p.m.slot - base_slot) as u32, p.m.tx_idx, pool, mint, u, sg, e.fee_bps] {
+                        pw.write_all(&v.to_le_bytes())?;
+                    }
+                    for v in [e.base, e.quote, e.base_res, e.quote_res] {
+                        pw.write_all(&v.to_le_bytes())?;
+                    }
+                    pw.write_all(&e.vq.to_le_bytes())?;
+                    pw.write_all(&e.fee.to_le_bytes())?;
+                    pw.write_all(&e.extra.to_le_bytes())?;
+                    np += 1;
+                }
+                Ev::Complete(c) => {
+                    let m = id(&mut mints, &mut mint_list, c.mint);
+                    kw.write_all(&m.to_le_bytes())?;
+                    kw.write_all(&((c.m.slot - base_slot) as u32).to_le_bytes())?;
+                }
+                _ => {}
+            }
+        }
+    }
+    tw.flush()?;
+    cw.flush()?;
+    kw.flush()?;
+    pw.flush()?;
+    let mut s = String::new();
+    for k in &mint_list {
+        let _ = writeln!(s, "{k}");
+    }
+    fs::write(out.join("mints.txt"), &s)?;
+    s.clear();
+    for k in &wal_list {
+        let _ = writeln!(s, "{k}");
+    }
+    fs::write(out.join("wallets.txt"), &s)?;
+    fs::write(out.join("base_slot.txt"), format!("{base_slot}\n"))?;
+    println!("pool events {np}");
+    println!("trades {nt} creates {nc} mints {} wallets {} base_slot {base_slot}", mint_list.len(), wal_list.len());
     Ok(())
 }

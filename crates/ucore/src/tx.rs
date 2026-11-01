@@ -95,6 +95,8 @@ pub struct DecodeCfg {
     pub watch: FxHashSet<Pk>,
     /// How long (slots) a created mint stays "active" for token-transfer tracking.
     pub active_mint_slots: u64,
+    /// Also decode PumpSwap (graduated coin) events.
+    pub decode_amm: bool,
 }
 
 impl Default for DecodeCfg {
@@ -104,6 +106,7 @@ impl Default for DecodeCfg {
             fund_max_lamports: 2_000_000_000_000,   // 2000 SOL
             watch: FxHashSet::default(),
             active_mint_slots: crate::pump::secs(3600),
+            decode_amm: false,
         }
     }
 }
@@ -112,6 +115,8 @@ impl Default for DecodeCfg {
 pub struct DecodeState {
     pub active_mints: FxHashMap<Pk, u64>,
     last_prune: u64,
+    /// PumpSwap pool → (base mint, quote mint), learned from instructions and pool creations.
+    pub pools: FxHashMap<Pk, (Pk, Pk)>,
 }
 
 impl DecodeState {
@@ -208,6 +213,7 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
             Ev::Complete(x) => x.m.ev_idx = ev_idx,
             Ev::Fund(x) => x.m.ev_idx = ev_idx,
             Ev::TokXfer(x) => x.m.ev_idx = ev_idx,
+            Ev::Pool(x) => x.m.ev_idx = ev_idx,
             Ev::Block(_) => {}
         }
         ev_idx = ev_idx.wrapping_add(1);
@@ -296,6 +302,52 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
                     push(out, Ev::Complete(Complete { m: meta.clone(), mint: c.mint, user: c.user }));
                 }
                 None => {}
+            }
+        }
+    }
+
+    // ---- PumpSwap events (graduated coins)
+    if cfg.decode_amm && tx.touches(&crate::amm::PUMP_AMM) {
+        const SINGLE_HOP: [[u8; 8]; 7] = [
+            [102, 6, 61, 18, 1, 218, 235, 234],
+            [51, 230, 133, 164, 1, 127, 131, 173],
+            [184, 23, 238, 97, 103, 197, 211, 61],
+            [93, 246, 130, 60, 231, 233, 64, 178],
+            [198, 46, 21, 82, 180, 217, 232, 112],
+            [194, 171, 28, 70, 104, 77, 91, 47],
+            [105, 68, 6, 175, 0, 7, 35, 162],
+        ];
+        let learn = |ix: &Ix, st: &mut DecodeState| {
+            if tx.key(ix.program) == crate::amm::PUMP_AMM && ix.data.len() >= 8 && ix.accounts.len() >= 5 {
+                let d: [u8; 8] = ix.data[..8].try_into().unwrap();
+                if SINGLE_HOP.contains(&d) {
+                    st.pools.insert(tx.key(ix.accounts[0]), (tx.key(ix.accounts[3]), tx.key(ix.accounts[4])));
+                }
+            }
+        };
+        for ix in &tx.ixs {
+            learn(ix, st);
+        }
+        for (_, inner) in &tx.inner {
+            for ix in inner {
+                learn(ix, st);
+            }
+        }
+        for (_, inner) in &tx.inner {
+            for ix in inner {
+                if tx.key(ix.program) == crate::amm::PUMP_AMM && ix.data.len() > 16 && ix.data[..8] == pump::EVENT_IX_TAG {
+                    if let Some(mut e) = crate::amm::decode_event(&ix.data[8..]) {
+                        if e.kind == crate::amm::PoolKind::Create {
+                            st.pools.insert(e.pool, (e.mint, e.quote_mint));
+                        } else if e.mint == Pk::default() {
+                            if let Some((m, q)) = st.pools.get(&e.pool) {
+                                e.mint = *m;
+                                e.quote_mint = *q;
+                            }
+                        }
+                        push(out, Ev::Pool(crate::event::PoolEv { m: meta.clone(), e }));
+                    }
+                }
             }
         }
     }

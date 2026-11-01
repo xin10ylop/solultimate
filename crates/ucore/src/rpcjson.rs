@@ -91,7 +91,7 @@ pub struct RpcMeta {
 }
 
 fn needs_data(p: &Pk) -> bool {
-    *p == pump::PUMP_PROGRAM || *p == pump::SYSTEM_PROGRAM || *p == pump::COMPUTE_BUDGET
+    *p == pump::PUMP_PROGRAM || *p == pump::SYSTEM_PROGRAM || *p == pump::COMPUTE_BUDGET || *p == crate::amm::PUMP_AMM
 }
 
 fn conv_ix(ix: &RpcIx, keys: &[Pk]) -> Ix {
