@@ -215,3 +215,18 @@ in this regime.
 | 4 trades later / next slot | −0.3% | −1.2% | −0.4% |
 
 Their edge is position in the order flow, not logic we could learn.
+
+## 11. Completers, leader geography, liquidations, other launchpads
+
+* **Curve completers** (180 SOL-paired graduations): 68% complete with a single buy, mostly whole-curve
+  85 SOL self-graduations with nothing sold back within 10 min, plus the mayhem agent (45). Completers
+  lose on average (median −0.42 SOL, 33% win). Not an opportunity.
+* **Leader geography** (`research/geo/`, 764,804 slots, 654 leaders geolocated): 55.7% of slots have a
+  leader within 500 km of Frankfurt (Frankfurt 22.7%, Amsterdam 18.5%, London 8.1%). Same-slot
+  reactions to big buys happen almost as often with far leaders (62%) as with near ones (69%), and the
+  consistent cohort trades in exact proportion to slot share in every region: their edge is landing
+  infrastructure that works everywhere, not geography.
+* **Liquidations**: a Kamino tracker counts ~308,661 liquidations and ~$3.7M of total liquidator
+  profit since launch (~$12 per event), contested by co-located bots. Too small to be very profitable.
+* **Other launchpads**: per block, pump curve 18 txs, PumpSwap 51, Meteora DAMM v2 18, LaunchLab 0.8,
+  Meteora DBC 1.6. LaunchLab (Bonk.fun, StonkFun) SOL-quoted volume ≈ 11,000 SOL/day, ~3% of pump.fun.
