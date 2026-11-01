@@ -363,7 +363,7 @@ impl Brain {
         if self.launches.get(&mint).and_then(|l| l.real).is_some() {
             return;
         }
-        let x = crate::flow::features(mt, slot);
+        let x = crate::flow::features(mt, slot, &mut self.book);
         let pred = g.predict(&x);
         if pred < f.threshold {
             return;
@@ -465,10 +465,13 @@ impl Brain {
         }
         self.counters.tradable += 1;
         let (op, how) = self.book.attribute_launch(c.user, c.m.slot);
+        let ctx = self.book.launch_ctx(op, how, &c.user, c.m.slot);
         if how != "new" {
             self.counters.attributed_known += 1;
         }
         *self.counters.how.entry(how.to_string()).or_default() += 1;
+        let mut mt = mt;
+        mt.ctx = ctx;
         self.mints.insert(c.mint, mt);
         self.launches.insert(
             c.mint,
@@ -924,6 +927,7 @@ impl Brain {
         let Some(l) = self.launches.remove(&mint) else { return };
         let Some(mt) = self.mints.remove(&mint) else { return };
         self.by_mint.remove(&mint);
+        self.book.record_peak(l.op, mt.peak_after_b0());
         let op_launches_before = self
             .book
             .stats_of(l.op)

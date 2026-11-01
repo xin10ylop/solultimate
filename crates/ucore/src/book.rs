@@ -87,6 +87,10 @@ pub struct OpStats {
     pub devs: u32,
     /// Insider wallet → number of this operator's launches it bought in the create slot.
     pub insiders: FxHashMap<Pk, u16>,
+    /// Outcomes of resolved launches: count, sum of ln(peak after first candle), count ≥ 2×.
+    pub peak_n: u32,
+    pub peak_sum: f64,
+    pub peak_2x: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -317,6 +321,9 @@ impl OperatorBook {
             for (w, c) in g.insiders {
                 *k.insiders.entry(w).or_default() += c;
             }
+            k.peak_n += g.peak_n;
+            k.peak_sum += g.peak_sum;
+            k.peak_2x += g.peak_2x;
         }
         keep
     }
@@ -484,6 +491,40 @@ impl OperatorBook {
         s.launches.push(rec);
         if s.launches.len() > 400 {
             s.launches.drain(..100);
+        }
+    }
+
+    /// Record a resolved launch's peak (after the first candle) for its operator.
+    pub fn record_peak(&mut self, op: u32, peak: f64) {
+        let r = self.find(op);
+        let s = self.stats.entry(r).or_default();
+        s.peak_n += 1;
+        s.peak_sum += peak.max(1.0).ln();
+        if peak >= 2.0 {
+            s.peak_2x += 1;
+        }
+    }
+
+    /// (resolved launches, mean ln peak, share that reached 2×) for an operator.
+    pub fn peak_stats(&mut self, op: u32) -> (u32, f64, f64) {
+        let r = self.find(op);
+        match self.stats.get(&r) {
+            Some(s) if s.peak_n > 0 => (s.peak_n, s.peak_sum / s.peak_n as f64, s.peak_2x as f64 / s.peak_n as f64),
+            _ => (0, 0.0, 0.0),
+        }
+    }
+
+    /// Build the wallet-derived context for a launch attributed with `attribute_launch`.
+    pub fn launch_ctx(&mut self, op: u32, how: &str, dev: &Pk, slot: u64) -> crate::mint::LaunchCtx {
+        let fund = self.funding_of(dev).filter(|f| f.2 <= slot);
+        let created = self.stats_of(op).map(|s| s.n_created).unwrap_or(1);
+        crate::mint::LaunchCtx {
+            op,
+            how: crate::mint::how_code(how),
+            fund_kind: self.funding_kind(dev),
+            fund_sol: fund.map(|f| f.1 as f32 / 1e9).unwrap_or(0.0),
+            fund_age_s: fund.map(|f| (slot - f.2) as f32 * crate::pump::SLOT_MS as f32 / 1000.0).unwrap_or(-1.0),
+            op_created_before: created.saturating_sub(1),
         }
     }
 

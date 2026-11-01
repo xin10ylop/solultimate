@@ -111,6 +111,7 @@ fn run(mode: ExecMode) -> Brain {
     }
     let mut cfg = BrainCfg::default();
     cfg.mode = mode;
+    cfg.operator_entries = true;
     cfg.risk.default_max_entry_mcap = 200.0;
     let mut b = Brain::new(cfg);
     for e in &g.evs {

@@ -36,6 +36,15 @@ pub const FEATURE_NAMES: &[&str] = &[
     "dev_buy_sol",
     "n_trades",
     "buy_frac_all",
+    // wallet-derived context (no copy trading: who funded / launched, never "buy what X buys")
+    "how_linked",
+    "fund_kind",
+    "fund_sol",
+    "fund_age_s",
+    "op_created_before",
+    "op_resolved",
+    "op_mean_ln_peak",
+    "op_frac_2x",
 ];
 
 fn price_at_or_before(mt: &MintTracker, slot: u64) -> f64 {
@@ -54,7 +63,15 @@ fn price_at_or_before(mt: &MintTracker, slot: u64) -> f64 {
 }
 
 /// Feature vector at `slot` (call right after applying the latest event).
-pub fn features(mt: &MintTracker, slot: u64) -> Vec<f32> {
+pub fn features(mt: &MintTracker, slot: u64, book: &mut crate::book::OperatorBook) -> Vec<f32> {
+    let mut v = base_features(mt, slot);
+    let c = mt.ctx;
+    let (n, m, f2) = book.peak_stats(c.op);
+    v.extend_from_slice(&[c.how as f32, c.fund_kind as f32, c.fund_sol, c.fund_age_s, c.op_created_before as f32, n as f32, m as f32, f2 as f32]);
+    v
+}
+
+fn base_features(mt: &MintTracker, slot: u64) -> Vec<f32> {
     let price = mt.curve.price();
     let lr = |p0: f64| if p0 > 0.0 && price > 0.0 { (price / p0).ln() } else { 0.0 };
     let win = |w: u64| {

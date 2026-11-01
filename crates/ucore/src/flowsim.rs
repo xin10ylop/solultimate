@@ -47,6 +47,8 @@ struct Acc {
 }
 
 pub struct FlowSim {
+    pub book: crate::book::OperatorBook,
+    peak_pending: Vec<(Pk, u64)>,
     pub mints: FxHashMap<Pk, MintTracker>,
     positions: FxHashMap<u64, (Position, usize, u64)>,
     by_mint: FxHashMap<Pk, Vec<u64>>,
@@ -72,6 +74,8 @@ pub struct FlowSim {
 impl FlowSim {
     pub fn new(stake: u64, latency: LatencyModel) -> FlowSim {
         FlowSim {
+            book: crate::book::OperatorBook::default(),
+            peak_pending: Vec::new(),
             mints: FxHashMap::default(),
             positions: FxHashMap::default(),
             by_mint: FxHashMap::default(),
@@ -107,8 +111,12 @@ impl FlowSim {
         }
         match ev {
             Ev::Create(c) => {
-                let mt = MintTracker::new(c);
+                let mut mt = MintTracker::new(c);
                 if mt.tradable && !mt.mayhem {
+                    // same attribution as the brain (pre-launch facts only)
+                    let (op, how) = self.book.attribute_launch(c.user, c.m.slot);
+                    mt.ctx = self.book.launch_ctx(op, how, &c.user, c.m.slot);
+                    self.peak_pending.push((c.mint, c.m.slot));
                     self.mints.insert(c.mint, mt);
                 }
             }
@@ -125,7 +133,11 @@ impl FlowSim {
                 self.check(c.mint, c.m.slot, c.m.tx_idx);
             }
             Ev::Block(b) => self.on_block(b),
-            Ev::Fund(_) => {}
+            Ev::Fund(f) => {
+                if f.to_pre == 0 {
+                    self.book.on_fund(f.from, f.to, f.lamports, f.m.slot);
+                }
+            }
         }
     }
 
@@ -159,7 +171,7 @@ impl FlowSim {
             return;
         }
         *le = (t.m.slot, le.1 + 1);
-        let feats = features(mt, t.m.slot);
+        let feats = features(mt, t.m.slot, &mut self.book);
         let curve = mt.curve;
         let fee = mt.fee_bps;
         let row_id = self.next_id;
@@ -217,6 +229,17 @@ impl FlowSim {
         }
         for mt in self.mints.values_mut() {
             mt.on_block_end(b.slot);
+        }
+        // operator outcomes become known 10 minutes after launch (same as the brain)
+        while let Some((mint, s0)) = self.peak_pending.first().copied() {
+            if b.slot < s0 + secs(600) {
+                break;
+            }
+            self.peak_pending.remove(0);
+            if let Some(mt) = self.mints.get(&mint) {
+                let (op, peak) = (mt.ctx.op, mt.peak_after_b0());
+                self.book.record_peak(op, peak);
+            }
         }
         // collect closed positions
         let closed: Vec<u64> = self.positions.iter().filter(|(_, (p, _, _))| p.state == PosState::Closed).map(|(k, _)| *k).collect();

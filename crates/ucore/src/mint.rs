@@ -140,6 +140,33 @@ pub struct MintTracker {
     pub dev_max_hold: i128,
     pub n_buys: u32,
     pub n_sells: u32,
+    pub max_price_after_b0: f64,
+    /// Wallet-derived launch context (set by the brain / flow simulator at create time).
+    pub ctx: LaunchCtx,
+}
+
+/// Wallet-derived, non-copy-trading context of a launch.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LaunchCtx {
+    pub op: u32,
+    /// 0 new, 1 dev reuse, 2 funder, 3 second-hop funder, 4 exchange exact amount, 5 insider
+    pub how: u8,
+    /// 0 unseen, 1 hub round amount, 2 hub non-round amount, 3 non-hub funder
+    pub fund_kind: u8,
+    pub fund_sol: f32,
+    pub fund_age_s: f32,
+    pub op_created_before: u32,
+}
+
+pub fn how_code(how: &str) -> u8 {
+    match how {
+        "dev_reuse" => 1,
+        "funder" => 2,
+        "funder2" => 3,
+        "exchange_amount" => 4,
+        "insider" => 5,
+        _ => 0,
+    }
 }
 
 /// P-window horizons: 2s, 5s, 10s, 30s, 60s, 3m, 10m (in slots).
@@ -187,6 +214,16 @@ impl MintTracker {
             dev_max_hold: 0,
             n_buys: 0,
             n_sells: 0,
+            max_price_after_b0: 0.0,
+            ctx: LaunchCtx::default(),
+        }
+    }
+
+    /// Peak price after the first block relative to the first-candle close (≥ 1).
+    pub fn peak_after_b0(&self) -> f64 {
+        match self.block0_end {
+            Some(c) if c.price() > 0.0 => (self.max_price_after_b0 / c.price()).max(1.0),
+            _ => 1.0,
         }
     }
 
@@ -253,6 +290,9 @@ impl MintTracker {
         // order-flow bookkeeping
         let price = self.curve.price();
         self.max_price = self.max_price.max(price);
+        if t.m.slot > self.create_slot {
+            self.max_price_after_b0 = self.max_price_after_b0.max(price);
+        }
         let flip = if t.is_buy {
             self.n_buys += 1;
             self.first_buy.entry(t.user).or_insert(t.m.slot);

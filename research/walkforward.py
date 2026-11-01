@@ -24,10 +24,14 @@ ap.add_argument("--min-train-periods", type=int, default=3)
 ap.add_argument("--stake", type=float, default=0.25)
 ap.add_argument("--top-q", type=float, default=0.02, help="enter on the top q of training predictions")
 ap.add_argument("--max-open", type=int, default=3)
+ap.add_argument("--base-only", action="store_true", help="drop the wallet-derived features")
 a = ap.parse_args()
 
 df = pd.read_csv(a.csv).sort_values("slot").reset_index(drop=True)
 feat_cols = [c for c in df.columns[3:] if c[:2] not in ("r_", "fx", "ex", "fe")]
+WALLET = ["how_linked", "fund_kind", "fund_sol", "fund_age_s", "op_created_before", "op_resolved", "op_mean_ln_peak", "op_frac_2x"]
+if a.base_only:
+    feat_cols = [c for c in feat_cols if c not in WALLET]
 L = a.label
 df["net"] = df[f"r_{L}"] - df[f"fx_{L}"] / (a.stake * 1e9)
 df = df[df.net.notna()]
