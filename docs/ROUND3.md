@@ -138,3 +138,28 @@ Liquid gaps are closed inside the same slot by existing arbitrage bots. That rac
 searchers co-located with block producers, not to a bot landing 1–2 slots late. Not covered yet:
 quote tokens whose SOL market is on Raydium / Meteora / Orca (~900 of them), which needs decoders
 for those DEXes.
+
+## 8. The mayhem agent, decoded
+
+Mayhem program `MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e` (no published IDL; reverse-engineered
+from 4,332 live agent transactions and a full 10-minute window; scripts in `research/mayhem/`).
+
+* A crank key (`Gygj9QQb…`) calls the program's `buy` / `sell` (and `_v2`) ~14 times per second
+  across all mayhem coins. Each call CPIs a pump curve trade and emits a `MayhemTradeEvent`
+  (295-byte payload: direction @0, agent wallet @1, mint @33, SOL / token amounts @65 / @73,
+  running net SOL and net tokens as i128 @97 / @113, curve reserves @129–192, current time @161
+  and the mayhem end time = start + 86,400 s @169).
+* **Inside every agent transaction (95.5%) the curve's virtual SOL is rewritten before the trade**,
+  in the same direction as the trade (agent buy → price jumps up, 99.8%; sell → down). Virtual
+  tokens and real SOL never change. Jump quartiles −15% / +16%, 5th/95th percentile ±32%.
+  Rewrites never happen outside agent transactions (0 of 7,669).
+* Direction is a coin flip: P(buy | previous buy) 0.504, P(buy | previous sell) 0.512; no
+  dependence on the agent's inventory; no bit of the previous event predicts it better than 51.6%;
+  by price deviation before acting (no look-ahead) P(buy) stays within 0.48–0.55. Breaking even
+  on a +15% / −15% bet against a 2.5% round-trip fee needs ≥ 58% correct.
+* Activity is concentrated in each coin's first minutes (median rewrite at 47 s of age, 90%
+  within 3.4 min); almost no coin trades near its 24 h end.
+* Rewrites never push virtual SOL below the real SOL held by the curve, so there is no trapped
+  value to capture by buying out the curve (best case across 2,604 coins: 0.04 SOL).
+
+Verdict: a program-set random walk with large jumps. Nothing predictable to trade.
