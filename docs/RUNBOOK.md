@@ -45,37 +45,60 @@ Every day:
 `lab check` must show curve continuity ≥ 99.5% on non-mayhem coins. A drop means the program
 changed its event layout: stop and update `ucore/src/pump.rs` from the new IDL.
 
-## 2. Evaluation (day 30)
+## 2. Evaluation (day 30): is there a *consistent* edge?
 
-The replay is causal: every decision uses only information that existed at that slot, and
-every operator's record is selection-honest. So the whole month after the first week is
-out-of-sample by construction. Still, tune nothing on the last 10 days:
+The primary engine is the identity-free flow model (docs/STRATEGY.md §1). Evaluate it day
+by day, out of sample:
 
-1. Tune on days 1–20 only (gate thresholds, variant family, dump thresholds):
-   `lab sweep --data data/live --out reports/sweep --to-slot <day20 slot>` runs a grid of
-   gate settings × latency stress in one pass. Other ideas: `lab replay --to-slot <day20>`
-   with different `--config` files.
-2. Freeze the config. Run days 21–30 once: `lab replay --from-slot 0` (the warm-up must
-   include the earlier days, so replay everything and read only the day 21–30 rows).
-3. Stress the landing model: `--stress 1` (more next-slot, deeper queue) and `--stress 2`
-   (always a full slot late).
+```bash
+python3 -m venv .venv && .venv/bin/pip install numpy pandas scikit-learn lightgbm
 
-**Go-live gate. All of these must hold on days 21–30 with the frozen config:**
+# 1) decision points + latency-honest labels for the whole month
+./target/release/lab features --data data/live --out data/research/flow.csv \
+    --max-age-s 3600 --min-progress 0.3 --max-progress 0.97 --stake 500000000
+#    (repeat with --min-progress 0 --max-age-s 600 for the early-life regime)
+
+# 2) walk-forward: train on the trailing 14 days, trade the next day, for every day
+.venv/bin/python research/walkforward.py data/research/flow.csv --period 86400 \
+    --train-periods 14 --label h60 --stake 0.5
+#    also --label h30 / h15, and with features exported with --stress 1
+```
+
+**Go-live gate. All of these must hold on the walk-forward days (≥ 14 traded days):**
 
 | check | threshold |
 |---|---|
-| real (gated) trades | ≥ 60 |
-| mean return per trade after all costs | > +4% |
-| bootstrap 95% lower bound of mean return | > 0 |
-| profitable days | ≥ 7 of 10 |
-| largest single day's share of total PnL | < 35% |
-| largest single operator's share of PnL | < 30% |
-| `--stress 1` mean return | > 0 |
-| `--stress 2` mean return | > −2% (it shows how fast the edge dies if you are slow) |
-| max drawdown | < 25% of the bankroll used in the replay |
+| profitable days | ≥ 70% |
+| mean return per trade after all costs | > +2% |
+| bootstrap 95% lower bound of mean return per trade | > 0 |
+| best single day's share of total PnL | < 25% |
+| same test with features exported at `--stress 1` | mean > 0 |
+| trades per day | enough to matter (≥ 10) |
 
-If any line fails, the honest answer is "no edge yet". Record another 2 weeks (the
-operator population changes) or change the hypothesis. Don't loosen thresholds.
+If it fails, the honest answer is "no consistent edge at this latency and cost". Do not
+lower thresholds. Change something structural (stake size, holding window, regime) and
+re-test on *new* days.
+
+**Production model.** Train on the latest 14 days and save the model:
+
+```bash
+.venv/bin/python research/flow_model.py data/research/flow.csv --label h60 \
+    --train-frac 1.0 --save research/models/flow.json
+```
+
+Then set `[brain.flow] enabled = true`, `model_path`, `label`, and a `threshold` equal to
+the walk-forward's training-quantile threshold. Retrain daily (cron) and keep the previous
+model if the new one fails the walk-forward check on the latest day. Check it in-engine with
+the exact live code path:
+
+```bash
+./target/release/lab replay --data data/live --out reports/flow \
+    --flow-model research/models/flow.json --flow-label h60 --flow-threshold 0.03
+```
+
+Only read trades *after* the model's training window. Trades inside the training window
+look spectacular and mean nothing: on the pilot they showed +7–16%/trade in-sample and
+≈0% held-out.
 
 ## 3. Paper trading (3–7 days)
 

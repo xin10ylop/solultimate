@@ -36,6 +36,20 @@ ping_url = "http://fra2.nozomi.temporal.xyz/ping"
 # (print them with `lab replay --dump-config ...`).
 [brain]
 real_trading = true
+operator_entries = false             # identity-based plays rotate; research only
+context_entries = false
+
+# Primary engine: identity-free order-flow model (enable only after RUNBOOK §2 passes)
+[brain.flow]
+enabled = false
+model_path = "research/models/flow.json"
+label = "h60"                        # exit rule the model was trained for
+threshold = 0.03                     # min predicted net return (after fees + slippage)
+min_age_s = 2
+max_age_s = 3600
+min_progress = 0.3
+max_progress = 0.97
+eval_every_s = 1
 
 [brain.risk]
 bankroll_lamports = 2_000_000_000

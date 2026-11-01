@@ -1,9 +1,11 @@
 # solultimate
 
-A Rust engine for pump.fun on Solana. It learns which launch **operators** (serial devs and
-their wallet networks) and which launch **types** can be followed profitably *with your
-real latency*, and it trades only those. It does not use Twitter, KOLs, alpha groups or any
-manual curation.
+A Rust engine for pump.fun on Solana built around an **identity-free** order-flow model:
+it trades only on the structure of each coin's flow (momentum, net SOL flow, sniper
+sell-offs, holder concentration), never on who the wallets are. So it has nothing that goes
+stale when operators rotate. Everything is evaluated with your *measured* landing latency
+and every cost, and validated walk-forward, day by day. No Twitter, KOLs, alpha groups or
+copy trading.
 
 ```
              ┌─────────────── same code in backtest and live ───────────────┐
@@ -12,7 +14,8 @@ gRPC  ───────┤  (pump events, SOL     │   every launch, measur
 (or RPC      │   fundings, token      ├─ OperatorBook (identity graph +     │
  backfill)   │   transfers)           │   selection-honest track records)   │
              │                        ├─ ContextBook (launch types)         │
-             │                        └─ Gate (shrunk LCB) → real position  │
+             │                        ├─ Flow model (identity-free, LGBM)   │
+             │                        └─ Gates → real position              │
              └──────────────────────────────────────────┬───────────────────┘
                                                         │ intents
                                      pump v3 tx builder → Nozomi / RPC senders
@@ -33,6 +36,7 @@ gRPC  ───────┤  (pump events, SOL     │   every launch, measur
 | `crates/unode/src/bin/lab.rs` | `check` (decoder health), `replay` (causal backtest → summary.md, launches.csv, operators.csv, trades.csv, go-live checklist), `sweep` (gate/latency grid in one pass), `compare` (live vs model) |
 | `crates/unode/src/bin/simcheck.rs` | simulates our buy/sell transactions on mainnet against the live program |
 | `crates/unode/src/bin/trader.rs` | live trader: paper / live, kill switch, risk limits (feature `grpc`) |
+| `research/` | `flow_model.py` (fit + held-out report), `walkforward.py` (daily consistency test) |
 | `config/` | `trader.example.toml`, `brain.default.toml` (every tunable, with defaults) |
 | `deploy/` | systemd units for recorder and trader |
 
@@ -57,7 +61,9 @@ cat reports/pilot/summary.md        # plus launches.csv (play sheet) and trades.
 * Decoder, curve math and transaction layer are verified against mainnet. The math matches the
   program to the lamport, curve continuity holds on 99.8% of non-mayhem trades, and simulated
   `buy_exact_quote_in_v3` / `sell_v3` both succeed.
-* The strategy is a hypothesis machine with a strict gate. It is **not** proven profitable.
-  A ~2-day public-RPC pilot is not a month of data. Go live only after the runbook's
-  evaluation gate passes on your own 30-day recording, and then only at canary size.
+* **No strategy is proven profitable yet.** On the ~1-day public-RPC pilot the best
+  identity-free regime is at break-even out of sample after all costs. Every "edge" that
+  looked big was either in-sample or came from optimistic fills (see docs/STRATEGY.md §2).
+  Go live only after the walk-forward gate in RUNBOOK §2 passes on your own 30-day
+  recording, and then only at canary size.
 * Memecoin trading can lose everything you put in the hot wallet. Keep the treasury elsewhere.

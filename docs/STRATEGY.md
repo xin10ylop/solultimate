@@ -1,119 +1,102 @@
-# Strategy: Lineage
+# Strategy
 
-**One sentence.** Every pump.fun launch is attributed, in real time and using only
-pre-launch information, to an *operator* (the wallet network behind it) and to a *launch
-type*. Every launch is shadow-traded with a family of entry/exit playbooks under our *measured*
-landing latency. Real money goes only to an operator or type whose **selection-honest**
-track record has a lower confidence bound above zero, and only with the playbook that earned it.
+## The requirement
 
-## 1. What we took from the reference material, and what we threw away
+The edge must be **consistent**. That rules out a play that works for a week and dies when
+an operator rotates wallets, and it rules out copy trading and anything social. So the
+primary engine is **identity-free**. It uses only the shape of each coin's order flow, which
+every launch has, and it never asks *who* is trading. Nothing in it depends on a wallet list
+that can go stale.
 
-| Source | Kept (as a mechanism, automated) | Dropped |
-|---|---|---|
-| FOMO / F-Project (3 FR videos) | ruggers are bots, so they repeat; funding traces: exchange hot wallet + exact non-round amount, mother wallets, last-transfer chains, fresh-wallet filter; qualify on ≥10 past launches; first-candle size cap; bundle size and fresh bundle wallets correlate with "real" runs; Max-Loss after N consecutive losses; sell on big buy; front-run sell on token consolidation; phantom SL; sell on no activity; buy on dev sell; buy the dip; "crumbs, not the cake" sizing | manual Solscan work, Axiom UI rules, fixed +100% TP chosen by eye, the assumption that we land in block 0 |
-| Play-finder video (Robinhood chain) | "first taxed buyer" = the *true* entry, not the dev's price; P-columns (gain 2/5/10/30/60 s after the true entry) as the way to judge a play; sprayer/treasury watch that pre-arms the next fresh dev wallet; per-play TP/drawdown from the P-columns; one category per play | Telegram bots, Claude-in-Chrome hunting, Twitter/KOL anything |
-| Your landing measurements | the whole latency model (§3.1). Same-slot 7/15, next slot 8/15, never first behind, 2–13 trades in between, +10.7% median price over the target, 20% price-limit refusals | — |
+The engine trades only what survives a walk-forward test: retrain on trailing days, trade the
+next day, and be profitable on most days, under the measured landing latency and every cost.
 
-## 2. What is new here
+## 1. Identity-free flow engine (primary)
 
-1. **No human in the loop.** Operator discovery runs on *every* launch (~15–28k/day, about half
-   SOL-paired and non-mayhem). Identity links are added only from facts that exist before the
-   launch: the dev wallet (reuse), its first funding (non-hub sender = treasury/mother/previous
-   dev, two hops), and for exchange hot wallets the `(hot wallet, exact amount)` signature,
-   which automates FOMO's "Binance 2 → 2.955 SOL" method. Recurring create-slot buyers become
-   the operator's insider wallets. Hubs (exchanges) are detected from fan-out, not hard-coded.
-2. **Shadow-trade everything.** Each tradable launch gets 22 shadow positions (entries at create,
-   at first-candle close, at the first dev sell, after the first dump × several exit rules),
-   each filled by the landing model against the real event stream. The book keeps learning
-   in production too, because live mode runs the same shadows.
-3. **Selection-honest records.** Picking the best of 22 playbooks per operator in hindsight
-   would overstate the edge. So before each launch we fix the playbook the operator's history
-   points to, and the operator's record is the result *of that pre-chosen playbook*. The gate
-   reads only that record:
-   `shrunk = (n·mean + n0·prior)/(n + n0)`, `LCB = shrunk − z·sd/√n`, where the prior is the
-   live population mean (≈ −5…−10% per trade: following random launches loses money).
-   Entry requires `n ≥ 6`, `LCB > +3%`, a win rate ≥ 45%, a positive mean over the last 4, no
-   loss streak ≥ 4, and the last 7 days only (operators change).
-4. **Context cohorts.** The same machinery runs on launch *types* (dev-buy size × bundle SOL ×
-   create-slot buyer count × funding kind), entered at first-candle close. These catch new
-   operators that run a known recipe, and they have a stricter gate (n ≥ 25, z = 1.64).
-5. **Latency-honest counterfactual fills.** Our fill is the curve state after the trades
-   that really executed ahead of us, using the program's exact integer math (verified to the
-   lamport against mainnet). Our own size is accounted for with a k-invariant SOL shift, so
-   later trades see the curve as it would have been with us in it. Transactions in a contiguous
-   group with the trigger (Jito bundles) are atomic: we can never land inside them. This
-   rule alone removed a fake +64% "big bundle" edge in the pilot.
-6. **Dump radar.** These are exit signals the operator cannot easily hide:
-   * a seller that never bought on the curve (its tokens came by transfer, i.e. a hidden insider);
-   * token consolidation into one wallet (≥12% of supply: FOMO's front-run sell, automated);
-   * a sell by the operator's known wallets;
-   * a big sell (≥12% of curve SOL);
-   * the operator's own learned *dump clock* (30th percentile of past dump times).
-7. **Adaptive anti-farm cap.** The entry price limit is the operator's own p75 first-candle
-   market cap × 1.35. A "farm" launch with an abnormally big first candle simply fails our
-   price limit at the cost of the priority fee.
-8. **One code path.** The recorder, the backtest, paper trading and live trading all feed
-   the same `Brain` with the same events. `lab compare` checks every live fill against its
-   shadow twin, which is how bugs and model optimism are found during the canary.
+**Signal.** At every trade of a young coin (configurable age and curve-progress window, ≤1
+evaluation per coin per second), `ucore::flow::features` computes 31 features. The groups:
 
-## 3. Mechanics
+| group | features |
+|---|---|
+| state | age, market cap, curve progress, return since create, drawdown from peak |
+| momentum | log return over 2 / 5 / 15 / 60 s |
+| flow | net SOL over 2 / 5 / 15 / 60 s; buys and sells over 5 / 15 s; unique buyers over 15 / 60 s; largest and average buy over 15 s |
+| exits | share of sell volume from *flippers* (wallets whose first buy was < 10 s ago: the sniper sell-off) |
+| concentration | top-1 / top-5 holder share, create-slot insider share still held, dev's remaining fraction |
+| launch shape | create-slot SOL, dev buy, trade count, buy fraction |
 
-### 3.1 Landing model (`ucore/src/fill.rs`)
-Solana slots are ~211 ms as of Nov 2026 (`lab check` measures it; `ucore::pump::SLOT_MS`).
-All time-based settings are written in seconds and converted with that constant, while
-the landing model itself is in slots, like your measurements.
+None of these is a wallet identity. They describe structure (FOMO, sniper exits,
+concentration) that exists on every coin, every day.
 
-* With p = 7/15 we land in the trigger slot after `k` more trades of the coin
-  (k ∈ {2,3,4,5,6,8,10,13}, median 4), or at slot end if fewer trades happen.
-* Otherwise we land in the next slot, behind `j ∈ {0,1,2,4}` trades of the coin (usually first).
-* The trigger's atomic group (consecutive transactions trading the coin) always executes
-  before us.
-* Buys carry `min_tokens_out`; sells carry `min_sol_out`. If the landing price violates the
-  limit, the transaction fails and costs base + priority fee (not the tip). Sells retry with a
-  wider limit.
-* Stress levels: `--stress 1` (25% same slot, deeper queues) and `--stress 2` (always ≥1 slot late).
+**Labels.** `ucore::flowsim` runs a real round trip from every decision point: the landing
+model (same/next slot, 2–13 trades ahead, Jito bundles atomic), exact curve math, price
+limits, and fixed costs kept separate so any stake size can be evaluated. Exit rules:
+`h5` (5 s), `h15` (TP 25% / SL 15% / 15 s), `h30` (TP 50% / SL 20% / trail / 30 s),
+`h60` (TP 100% / SL 30% / trail / 60 s).
 
-### 3.2 Costs (`CostModel`, both legs)
-Base fee 5,000; priority 120k CU × 3 lamports/CU (buy) and 100k × 2 (sell); Nozomi tip
-0.001 SOL per leg; curve fees as charged (0.95% protocol + 0.30% creator). At a 0.1 SOL
-stake the round trip costs ≈ 5.1% before any price move. **That is the hurdle every
-playbook must clear.**
+**Model.** `research/flow_model.py` trains a heavily regularized LightGBM (Huber loss on
+clipped net returns, 300 trees, ≥300 samples per leaf). `ucore::gbm` evaluates the dumped
+trees in Rust in microseconds, matching Python to 4e-7. In the brain, `Entry::Flow`
+enters when the predicted net return clears `flow.threshold`, with the same landing, exit
+and risk machinery as everything else.
 
-### 3.3 Exits (`ucore/src/policy.rs`)
-TP ladder on position value (net of fees), SL with optional arming delay, trailing stop,
-max hold, idle exit, dump-signal exit (Off / Hard / All), operator dump clock, and forced exit
-on curve completion.
+**Consistency test.** `research/walkforward.py` retrains for every period (a day on real
+data) on the trailing N periods, picks the threshold on training data only, and trades
+the next period with one trade per coin and at most `max_open` concurrent. The go-live
+criterion is the share of profitable days and the concentration of PnL, not the total.
 
-### 3.4 Risk (`RiskCfg`)
-Stake ≤ min(config, 5% of bankroll); at most 3 open positions, one per operator; daily loss
-limit; pause after 5 consecutive losses; mayhem, non-SOL-quote, cashback and depth>0 coins
-are excluded.
+## 2. What the pilot data says (real mainnet blocks, Nov 2026)
 
-## 4. What the data says so far (pilot on real mainnet blocks)
+| hypothesis (identity-free unless marked) | result on pilot |
+|---|---|
+| Buy every launch at create / first-candle close | −4% to −6% per trade (≈ the round-trip cost): no edge |
+| "Big bundle" launches | looked +64%/trade until bundles were modelled as atomic; −3.6% after. **Fake edge from optimistic fills** |
+| Flow model, coins 2 s–10 min old | best held-out cells −2% to −5%/trade: no edge |
+| Flow model, "final stretch" coins (30–97% progress, ≤1 h old) | held-out ≈ break-even (+0.2% … +1%/trade at 0.1 SOL). The model improves on the −3.5% baseline by ~3.5 pts, but not past costs |
+| Same model, *in-sample* hours | +7% … +16%/trade, 57–68% win rate. **This is what overfitting looks like**; it vanishes out of sample |
+| Mayhem-mode coins (pump.fun's agent rewrites reserves) | agent jumps are unpredictable (autocorr −0.02) with **negative drift −1% to −3% per jump**: avoid |
+| Clones of hot tickers (on-chain narrative) | no better than other launches |
+| Serial operators (identity-based, off by default) | a few strong records (+9% … +26%/trade, n = 7–41), none statistically proven in hours of data, and they rotate |
 
-See `reports/pilot/summary.md` for the generated report. The key facts:
+The honest summary is that **no strategy is proven profitable yet.** The most promising
+identity-free regime (final stretch, 30–60 s holds) is at break-even after all costs on
+hours of data. Two levers decide it, and both need the 30-day recording:
 
-* **Mayhem coins** (~34% of launches) have virtual reserves rewritten by pump.fun's agent
-  between trades. Constant-product replay does not apply, so they are excluded.
-* **Decoder health.** Curve continuity holds on 99.8% of non-mayhem trades.
-* **Most pump transactions fail** (~80% of pump txs in a block): sniper/bot spam.
-* **Base rate.** Blindly following launches at our latency loses about the round-trip cost
-  (median ≈ −5%, win rate 10–15%). The edge, if any, is in selection, not in speed.
-* **The fake edge.** A "big bundle" bucket looked like +64% per trade until bundles were
-  modelled as atomic. After the fix it was −3.6%. Anything that only works if you land inside
-  the creator's bundle is not an edge for us.
+1. **More data.** A 31-feature model needs weeks, not hours.
+2. **Stake size vs fixed costs.** Tips + priority + base fees are ~0.0026 SOL per round
+   trip: 2.6% of a 0.1 SOL stake but 0.5% of 0.5 SOL. Curve fees (0.95% + 0.30% per side)
+   are the floor at any size. The pilot's break-even at 0.1 SOL is roughly +2% at 0.5 SOL,
+   if price impact stays small (the simulator includes our own impact).
 
-The pilot is a few days at most. It shows the machinery working and what to expect. It
-cannot validate an edge. The 30-day recording plus the go-live gate in the runbook does that.
+## 3. Execution realism (applies to everything)
 
-## 5. Known limitations
+* **Landing model** (`ucore/src/fill.rs`), from your 15 measured landings: 7/15 same slot
+  (2–13 coin trades ahead, median 4), 8/15 next slot (usually first), never first behind
+  the trigger. The trigger's contiguous transaction group (Jito bundle) always executes
+  before us. Stress levels 1–2 for robustness.
+* **Slots are ~211 ms** (Nov 2026; `lab check` measures it). Every time setting is written
+  in seconds.
+* **Exact program math.** Buy/sell quotes match the program to the lamport. Simulated
+  `buy_exact_quote_in_v3` / `sell_v3` succeed on mainnet.
+* **Costs:** base 5,000 lamports; priority 120k CU × 3 lamports (buy) and 100k × 2 (sell);
+  Nozomi tip 0.001 SOL per leg; curve fees as charged; price-limit refusals cost the
+  priority fee only.
 
-* Operators adapt when they notice snipers (FOMO's "farming"). The recency check, the loss
-  streak bench and the 7-day lookback limit the damage. They cannot prevent the first losses
-  after a change.
-* Our own buys are not in the historical data. The k-shift accounts for price impact, but
-  not for operators reacting to us.
-* Fresh-wallet funding lineage needs the firehose feed. Without it, attribution relies on dev
-  reuse and recurring insiders only.
-* Synthetic migration (the last buy may overflow into the AMM) is treated as an immediate
-  exit at the last curve price.
+## 4. Optional research layers (off for trading by default)
+
+These remain in the engine because they generate research data (the play sheets), but they
+do not trade unless switched on (`operator_entries`, `context_entries`):
+
+* **Operator book.** An identity graph built only from pre-launch facts: dev reuse,
+  funding (two hops), and the `(exchange hot wallet, exact amount)` signature. For example,
+  it found 18 dev wallets each funded with exactly 5.000 SOL from one exchange hot wallet,
+  verified on-chain. These records are selection-honest, but by nature they rotate.
+* **Context cohorts.** Launch types (dev buy × bundle × crowd × funding kind) with a strict gate.
+* **Lifecycle shadows** at create, first-candle close, first dev sell and after the first dump.
+
+## 5. Risk (applies to everything)
+
+Stake ≤ min(config, 5% of bankroll); max open positions; one position per coin; daily loss
+limit; pause after a loss streak; mayhem / non-SOL / cashback / depth>0 coins excluded;
+kill switch; stream-lag guard; hot-wallet balance cap; orphan and leftover handling;
+rent reclaim. See RUNBOOK.md.

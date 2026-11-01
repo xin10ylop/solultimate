@@ -1,5 +1,7 @@
 mode = "Sim"
 real_trading = true
+operator_entries = false
+context_entries = false
 shadow_stake_lamports = 100000000
 shadow_mayhem = false
 buy_slip = 4.0
@@ -9,6 +11,17 @@ resolve_slots = 2843
 late_attr_slots = 0
 seed = 7
 static_hubs = []
+
+[flow]
+enabled = false
+model_path = "research/models/flow.json"
+label = "h60"
+threshold = 0.05
+min_age_s = 2
+max_age_s = 3600
+min_progress = 0.3
+max_progress = 0.97
+eval_every_s = 1
 
 [gate]
 min_n = 6
