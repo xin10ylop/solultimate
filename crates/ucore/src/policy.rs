@@ -66,6 +66,9 @@ pub struct ExitRules {
     pub on_dump: DumpMode,
     /// Exit at this quantile of the operator's historical dump time (slots after create).
     pub dump_clock_q: Option<f64>,
+    /// Exit once bonding-curve progress reaches this level (graduation plays).
+    #[serde(default)]
+    pub progress_exit: Option<f64>,
 }
 
 /// The policy family evaluated in shadow on every launch.
@@ -92,6 +95,7 @@ pub fn default_variants() -> Vec<ExitRules> {
         idle_slots: secs(20),
         on_dump: dump,
         dump_clock_q: clock,
+        progress_exit: None,
     };
     vec![
         v("t2s", vec![], -0.60, None, 2, Off, None),
@@ -432,6 +436,12 @@ impl Position {
         if mt.completed {
             self.request_sell_at(1.0, "migrated", curve, fee, slot, tx, true, cx);
             return;
+        }
+        if let Some(pe) = r.progress_exit {
+            if curve.progress() >= pe {
+                self.request_sell_at(1.0, "progress_exit", curve, fee, slot, tx, false, cx);
+                return;
+            }
         }
         if let Some(s) = sig {
             if r.on_dump.fires(&s) {

@@ -86,6 +86,23 @@ enum Cmd {
         #[arg(long, default_value_t = 10)]
         n: usize,
     },
+    /// Signal lab: many entry mechanisms × exit styles, latency-honest (CSV rows).
+    Signals {
+        #[arg(long)]
+        data: Vec<PathBuf>,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 250_000_000)]
+        stake: u64,
+        #[arg(long, default_value_t = 0)]
+        stress: u32,
+        /// Only these signal name prefixes (comma separated).
+        #[arg(long, default_value = "")]
+        only: String,
+        /// Use the dense exit grid instead of the default exit styles.
+        #[arg(long)]
+        exit_grid: bool,
+    },
     Replay {
         #[arg(long)]
         data: PathBuf,
@@ -119,6 +136,7 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
         Cmd::Compare { journal } => compare(journal),
+        Cmd::Signals { data, out, stake, stress, only, exit_grid } => signals(data, out, stake, stress, only, exit_grid),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
             let txt = fs::read_to_string(features)?;
@@ -823,5 +841,41 @@ fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
         }
     }
     println!("wrote {n} mayhem trades");
+    Ok(())
+}
+
+fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, exit_grid: bool) -> Result<()> {
+    use ucore::siglab::SigLab;
+    let mut lab = SigLab::new(stake, LatencyModel::stressed(stress));
+    lab.only = only.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
+    if exit_grid {
+        lab.exits = ucore::siglab::exit_grid();
+    }
+    let exits: Vec<String> = lab.exits.iter().map(|e| e.name.clone()).collect();
+    let mut w = std::io::BufWriter::new(fs::File::create(&out)?);
+    writeln!(w, "signal,exit,mint,time,slot,age_s,mcap,net,fixed,failed,reason,hold_slots,op,dev,funder,how,fund_kind,op_created_before")?;
+    let t0 = std::time::Instant::now();
+    let mut n = 0u64;
+    for d in &data {
+        for blk in StoreReader::open(d)? {
+            for e in &blk {
+                lab.on_event(e);
+            }
+            for r in lab.out.drain(..) {
+                writeln!(
+                    w,
+                    "{},{},{},{},{},{:.1},{:.2},{},{},{},{},{},{},{},{},{},{},{}",
+                    lab.names[r.signal as usize], exits[r.exit as usize], r.mint, r.time, r.slot, r.age_s, r.mcap, f(r.net), r.fixed, r.failed as u8, r.reason, r.hold_slots, r.op, r.dev, r.funder, r.how, r.fund_kind, r.op_created_before
+                )?;
+                n += 1;
+            }
+        }
+    }
+    println!("{n} rows in {:.1}s", t0.elapsed().as_secs_f64());
+    for (i, s) in lab.names.iter().enumerate() {
+        if !s.starts_with("rm_") {
+            println!("  {s:24} fires {}", lab.fires[i]);
+        }
+    }
     Ok(())
 }

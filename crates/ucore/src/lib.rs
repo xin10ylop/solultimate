@@ -12,6 +12,7 @@ pub mod pk;
 pub mod policy;
 pub mod pump;
 pub mod rpcjson;
+pub mod siglab;
 pub mod store;
 pub mod tx;
 pub mod txbuild;

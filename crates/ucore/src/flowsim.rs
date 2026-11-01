@@ -23,6 +23,7 @@ pub fn label_rules() -> Vec<ExitRules> {
         idle_slots: secs(10),
         on_dump: DumpMode::Off,
         dump_clock_q: None,
+        progress_exit: None,
     };
     vec![
         r("h5", vec![], -0.25, None, 5),
