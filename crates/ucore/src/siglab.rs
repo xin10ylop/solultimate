@@ -60,6 +60,33 @@ pub fn signal_names() -> Vec<String> {
     v
 }
 
+/// Long-hold exits: the edge must dwarf a ~10% entry premium and 3–8 slot sell delays.
+pub fn exit_grid_long() -> Vec<ExitRules> {
+    let mut v = Vec::new();
+    for tp in [0.5, 1.0, 2.0, 9.0] {
+        for (ttag, trail) in [("notr", None), ("tr50", Some((0.5, 0.25))), ("tr100", Some((1.0, 0.4)))] {
+            for sl in [-0.30, -0.50] {
+                for hold in [15u64, 60, 180, 600] {
+                    v.push(ExitRules {
+                        name: format!("L_tp{}_{}_sl{}_h{hold}", if tp > 5.0 { "none".into() } else { format!("{tp}") }, ttag, -sl),
+                        entry: Entry::Create,
+                        tp: if tp > 5.0 { vec![] } else { vec![(tp, 1.0)] },
+                        sl,
+                        sl_arm_slots: 0,
+                        trail,
+                        max_hold_slots: secs(hold),
+                        idle_slots: secs(60),
+                        on_dump: DumpMode::Off,
+                        dump_clock_q: None,
+                        progress_exit: None,
+                    });
+                }
+            }
+        }
+    }
+    v
+}
+
 /// Exit set for the launch-structure family: hold/trail × dump reaction × SL × hold time.
 pub fn exit_grid_lse() -> Vec<ExitRules> {
     let mut v = Vec::new();
@@ -166,6 +193,7 @@ pub struct SigRow {
     pub how: u8,
     pub fund_kind: u8,
     pub op_created_before: u32,
+    pub b0n: u32,
 }
 
 #[derive(Default, Clone)]
@@ -205,6 +233,8 @@ pub struct SigLab {
     index: FxHashMap<String, u16>,
     /// Only fire signals whose name starts with one of these prefixes (empty = all).
     pub only: Vec<String>,
+    /// Price limit for create-tx triggers (max adverse price increase; 1e9 = none).
+    pub create_slip: f64,
 }
 
 impl SigLab {
@@ -229,6 +259,7 @@ impl SigLab {
             index: signal_names().into_iter().enumerate().map(|(i, n)| (n, i as u16)).collect(),
             names: signal_names(),
             only: Vec::new(),
+            create_slip: 2.0,
         }
     }
 
@@ -310,12 +341,12 @@ impl SigLab {
     }
 
     fn at_create_end(&mut self, mint: Pk, slot: u64, tx: u32) {
-        self.fire("base_create", mint, slot, tx, 1.0);
+        self.fire("base_create", mint, slot, tx, self.create_slip);
         let Some(mt) = self.mints.get(&mint) else { return };
         let op = mt.ctx.op;
         let (n, _, f2) = self.book.peak_stats(op);
         if n >= 3 && f2 >= 0.5 {
-            self.fire("op_quality_create", mint, slot, tx, 1.0);
+            self.fire("op_quality_create", mint, slot, tx, self.create_slip);
         }
     }
 
@@ -677,6 +708,7 @@ impl SigLab {
                 how: self.mints.get(&p.mint).map(|m| m.ctx.how).unwrap_or(0),
                 fund_kind: self.mints.get(&p.mint).map(|m| m.ctx.fund_kind).unwrap_or(0),
                 op_created_before: self.mints.get(&p.mint).map(|m| m.ctx.op_created_before).unwrap_or(0),
+                b0n: self.mints.get(&p.mint).map(|m| m.block0.len() as u32).unwrap_or(0),
             });
         }
         if b.slot % 500 == 0 {

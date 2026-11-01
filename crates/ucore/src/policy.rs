@@ -210,6 +210,8 @@ pub struct Position {
     pub fill_slot: u64,
     pub entry_price: f64,
     pub entry_mcap: f64,
+    /// Market cap at the decision point (trigger), for slippage measurement.
+    pub decision_mcap: f64,
     /// Lamports spent on the buy, incl. curve fees (cost basis).
     pub cost: u64,
     pub tokens0: u64,
@@ -246,6 +248,7 @@ pub struct ClosedTrade {
     pub pnl: i64,
     pub ret: f64,
     pub entry_mcap: f64,
+    pub decision_mcap: f64,
     pub peak_gain: f64,
     pub exit_reason: String,
     pub failed_entry: bool,
@@ -278,7 +281,8 @@ impl Position {
         let mut rng = Rng::new(seed);
         let landing = cx.latency.sample(&mut rng);
         let (tok_now, _, _) = decision_curve.buy_quote_in(stake, fee_bps);
-        let mut min_out = (tok_now as f64 * (1.0 - cx.buy_slip)) as u64;
+        // buy_slip = max adverse *price* increase vs the decision state (1.0 = up to 2× price)
+        let mut min_out = (tok_now as f64 / (1.0 + cx.buy_slip.max(0.0))) as u64;
         if let Some(pmax) = max_price {
             // tokens we would get if the average price were pmax
             let net = stake as f64 * 10_000.0 / (10_000.0 + fee_bps as f64);
@@ -307,6 +311,7 @@ impl Position {
             fill_slot: 0,
             entry_price: 0.0,
             entry_mcap: 0.0,
+            decision_mcap: decision_curve.mcap_sol(),
             cost: 0,
             tokens0: 0,
             tokens: 0,
@@ -346,6 +351,9 @@ impl Position {
         match o.side {
             Side::Buy => {
                 let (tok, sol_net, fee) = c.buy_quote_in(o.amount, fee_bps);
+                // optional measured-slippage penalty: fewer tokens for the same SOL
+                let pen = cx.latency.sample_penalty(&mut self.rng);
+                let tok = (tok as f64 / (1.0 + pen)) as u64;
                 if tok == 0 || tok < o.min_out {
                     self.fixed_costs += cx.costs.buy_failed();
                     self.failed_entry = true;
@@ -373,7 +381,7 @@ impl Position {
                     o.attempts += 1;
                     o.trigger_slot = slot + 1;
                     o.group_open = false;
-                    o.landing = cx.latency.sample(&mut self.rng);
+                    o.landing = cx.latency.sample_sell(&mut self.rng);
                     o.seen = 0;
                     let slip = (cx.dump_sell_slip + 0.1 * o.attempts as f64).min(0.98);
                     o.min_out = (out as f64 * (1.0 - slip)) as u64;
@@ -410,7 +418,7 @@ impl Position {
             trigger_slot: slot,
             trigger_tx: tx,
             group_open: tx != u32::MAX,
-            landing: cx.latency.sample(&mut self.rng),
+            landing: cx.latency.sample_sell(&mut self.rng),
             seen: 0,
             amount: amt,
             min_out: (expect as f64 * (1.0 - slip)) as u64,
@@ -500,6 +508,7 @@ impl Position {
             pnl,
             ret: pnl as f64 / self.stake.max(1) as f64,
             entry_mcap: self.entry_mcap,
+            decision_mcap: self.decision_mcap,
             peak_gain: self.peak_gain,
             exit_reason: self.exit_reason.to_string(),
             failed_entry: self.failed_entry,

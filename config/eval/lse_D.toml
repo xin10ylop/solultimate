@@ -1,0 +1,11 @@
+[structure]
+enabled = true
+max_op_prior = 0
+min_bundle_buyers = 0
+[risk]
+bankroll_lamports = 100_000_000_000
+stake_lamports = 250_000_000
+max_stake_frac = 0.05
+max_open = 6
+daily_loss_limit_lamports = 100_000_000_000
+max_consec_losses = 1_000_000

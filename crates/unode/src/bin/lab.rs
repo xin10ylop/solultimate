@@ -108,6 +108,18 @@ enum Cmd {
         /// More sensitive dump detectors (any create-slot wallet selling ≥ 0.05 SOL).
         #[arg(long)]
         dump_sensitive: bool,
+        /// Add the measured +1.5…19.2% price-over-target penalty to every entry.
+        #[arg(long)]
+        penalty: bool,
+        /// Price limit for create-tx triggers (max adverse price increase).
+        #[arg(long, default_value_t = 2.0)]
+        create_slip: f64,
+        /// All realism switches: measured live costs, entry premium, 3–8 slot late sells.
+        #[arg(long)]
+        live_real: bool,
+        /// Long-hold exit set.
+        #[arg(long)]
+        exit_long: bool,
     },
     Replay {
         #[arg(long)]
@@ -141,6 +153,15 @@ enum Cmd {
         /// Stake per trade in lamports (overrides config).
         #[arg(long)]
         stake: Option<u64>,
+        /// Add the measured +1.5…19.2% price-over-target penalty to every entry.
+        #[arg(long)]
+        penalty: bool,
+        /// Measured live costs (3.5M lamports priority per attempt + tip).
+        #[arg(long)]
+        live_costs: bool,
+        /// Sells land 3–8 slots after the trigger.
+        #[arg(long)]
+        late_sells: bool,
     },
 }
 
@@ -148,7 +169,7 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Check { data } => check(data),
         Cmd::Compare { journal } => compare(journal),
-        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive } => signals(data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive),
+        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long), dump_sensitive, penalty, create_slip, live_real),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
             let txt = fs::read_to_string(features)?;
@@ -165,7 +186,7 @@ fn main() -> Result<()> {
         Cmd::Mayhem { data, out } => mayhem(data, out),
         Cmd::Features { data, out, stake, stress, max_age_s, min_progress, max_progress, from_slot, to_slot } => export_features(data, out, stake, stress, (max_age_s, min_progress, max_progress), from_slot, to_slot),
         Cmd::Sweep { data, out, from_slot, to_slot } => sweep(data, out, from_slot, to_slot),
-        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot, flow_model, flow_label, flow_threshold, lse, stake } => {
+        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot, flow_model, flow_label, flow_threshold, lse, stake, penalty, live_costs, late_sells } => {
             let mut cfg: BrainCfg = match config {
                 Some(p) => toml::from_str(&fs::read_to_string(p)?)?,
                 None => BrainCfg::default(),
@@ -178,6 +199,15 @@ fn main() -> Result<()> {
             }
             if lse {
                 cfg.structure.enabled = true;
+            }
+            if penalty {
+                cfg.latency = cfg.latency.clone().with_measured_penalty();
+            }
+            if late_sells {
+                cfg.latency = cfg.latency.clone().with_late_sells();
+            }
+            if live_costs {
+                cfg.costs = ucore::fill::CostModel::measured_live();
             }
             if let Some(st) = stake {
                 cfg.risk.stake_lamports = st;
@@ -342,11 +372,11 @@ fn write_launches(path: &PathBuf, rows: &[LaunchRow], names: &[String]) -> Resul
 
 fn write_trades(path: &PathBuf, t: &[ClosedTrade], names: &[String]) -> Result<()> {
     let mut w = std::io::BufWriter::new(fs::File::create(path)?);
-    writeln!(w, "id,mint,variant,operator,decision_slot,fill_slot,close_slot,hold_slots,stake_sol,cost_sol,proceeds_sol,fixed_costs_sol,pnl_sol,ret,entry_mcap_sol,peak_gain,exit_reason,failed_entry")?;
+    writeln!(w, "id,mint,variant,operator,decision_slot,fill_slot,close_slot,hold_slots,stake_sol,cost_sol,proceeds_sol,fixed_costs_sol,pnl_sol,ret,entry_mcap_sol,decision_mcap_sol,peak_gain,exit_reason,failed_entry")?;
     for x in t {
         writeln!(
             w,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             x.id,
             x.mint,
             names[x.variant],
@@ -362,6 +392,7 @@ fn write_trades(path: &PathBuf, t: &[ClosedTrade], names: &[String]) -> Result<(
             f(x.pnl as f64 / 1e9),
             f(x.ret),
             f(x.entry_mcap),
+            f(x.decision_mcap),
             f(x.peak_gain),
             x.exit_reason,
             x.failed_entry
@@ -864,15 +895,27 @@ fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, exit_grid: bool, exit_lse: bool, dump_sensitive: bool) -> Result<()> {
+fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool) -> Result<()> {
     use ucore::siglab::SigLab;
-    let mut lab = SigLab::new(stake, LatencyModel::stressed(stress));
+    let (exit_grid, exit_lse, exit_long) = ex;
+    let mut lat = if penalty { LatencyModel::stressed(stress).with_measured_penalty() } else { LatencyModel::stressed(stress) };
+    if live_real {
+        lat = lat.with_late_sells();
+    }
+    let mut lab = SigLab::new(stake, lat);
+    lab.create_slip = create_slip;
     lab.only = only.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
     if exit_grid {
         lab.exits = ucore::siglab::exit_grid();
     }
     if exit_lse {
         lab.exits = ucore::siglab::exit_grid_lse();
+    }
+    if exit_long {
+        lab.exits = ucore::siglab::exit_grid_long();
+    }
+    if live_real {
+        lab.costs = ucore::fill::CostModel::measured_live();
     }
     if dump_sensitive {
         lab.dump.insider_min_lamports = 50_000_000;
@@ -883,7 +926,7 @@ fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: Stri
     }
     let exits: Vec<String> = lab.exits.iter().map(|e| e.name.clone()).collect();
     let mut w = std::io::BufWriter::new(fs::File::create(&out)?);
-    writeln!(w, "signal,exit,mint,time,slot,age_s,mcap,net,fixed,failed,reason,hold_slots,op,dev,funder,how,fund_kind,op_created_before")?;
+    writeln!(w, "signal,exit,mint,time,slot,age_s,mcap,net,fixed,failed,reason,hold_slots,op,dev,funder,how,fund_kind,op_created_before,b0n")?;
     let t0 = std::time::Instant::now();
     let mut n = 0u64;
     for d in &data {
@@ -894,8 +937,8 @@ fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: Stri
             for r in lab.out.drain(..) {
                 writeln!(
                     w,
-                    "{},{},{},{},{},{:.1},{:.2},{},{},{},{},{},{},{},{},{},{},{}",
-                    lab.names[r.signal as usize], exits[r.exit as usize], r.mint, r.time, r.slot, r.age_s, r.mcap, f(r.net), r.fixed, r.failed as u8, r.reason, r.hold_slots, r.op, r.dev, r.funder, r.how, r.fund_kind, r.op_created_before
+                    "{},{},{},{},{},{:.1},{:.2},{},{},{},{},{},{},{},{},{},{},{},{}",
+                    lab.names[r.signal as usize], exits[r.exit as usize], r.mint, r.time, r.slot, r.age_s, r.mcap, f(r.net), r.fixed, r.failed as u8, r.reason, r.hold_slots, r.op, r.dev, r.funder, r.how, r.fund_kind, r.op_created_before, r.b0n
                 )?;
                 n += 1;
             }

@@ -422,7 +422,7 @@ impl Brain {
         let Some(mt) = self.mints.get(&mint) else { return };
         if crate::structure::op_quality(&mut self.book, mt, &c) {
             let v = self.lse_hold;
-            self.enter_real(mint, v, slot, tx, c.entry_slip, "lse_op_quality".into());
+            self.enter_real(mint, v, slot, tx, c.create_entry_slip, "lse_op_quality".into());
         }
     }
 
@@ -433,7 +433,10 @@ impl Brain {
             return;
         }
         let Some(mt) = self.mints.get(&mint) else { return };
-        if crate::structure::runmode(mt, &self.book, c.g0_supply, c.g0_fresh, c.g0_window_s, c.g0_min_n) {
+        if crate::structure::not_farm(mt, &c)
+            && mt.block0.len() >= c.min_bundle_buyers
+            && crate::structure::runmode(mt, &self.book, c.g0_supply, c.g0_fresh, c.g0_window_s, c.g0_min_n)
+        {
             let v = self.lse_trail;
             self.enter_real(mint, v, slot, gtx, c.entry_slip, "lse_g0_runmode".into());
         }

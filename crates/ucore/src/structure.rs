@@ -33,8 +33,15 @@ pub struct StructureCfg {
     pub fresh_bundle_frac: f64,
     pub fresh_bundle_min_n: usize,
     pub fresh_window_s: u64,
-    /// Max adverse fill vs the decision price (bundles move price fast).
+    /// Max adverse price increase vs the decision state for bundle-end / first-candle
+    /// entries (1.0 = accept up to 2× the trigger price).
     pub entry_slip: f64,
+    /// Same for create-tx entries (the operator's bundle lands ahead of us: ~+165% typical).
+    pub create_entry_slip: f64,
+    /// Anti-farm: skip operators with more than this many earlier launches (0 = off).
+    pub max_op_prior: u32,
+    /// Bundle-based members need at least this many create-slot buyers (0 = off).
+    pub min_bundle_buyers: usize,
 }
 
 impl Default for StructureCfg {
@@ -62,6 +69,9 @@ impl Default for StructureCfg {
             fresh_bundle_min_n: 3,
             fresh_window_s: 7_200,
             entry_slip: 1.0,
+            create_entry_slip: 2.0,
+            max_op_prior: 20,
+            min_bundle_buyers: 12,
         }
     }
 }
@@ -75,6 +85,15 @@ pub fn fresh_buyers(mt: &MintTracker, book: &OperatorBook, window_s: u64) -> usi
         .count()
 }
 
+/// Anti-farm check shared by all members.
+pub fn not_farm(mt: &MintTracker, c: &StructureCfg) -> bool {
+    c.max_op_prior == 0 || mt.ctx.op_created_before <= c.max_op_prior
+}
+
+fn big_enough(mt: &MintTracker, c: &StructureCfg) -> bool {
+    mt.block0.len() >= c.min_bundle_buyers
+}
+
 pub fn runmode(mt: &MintTracker, book: &OperatorBook, supply: f64, fresh: f64, window_s: u64, min_n: usize) -> bool {
     let n = mt.block0.len();
     if n < min_n || mt.insider_share() < supply {
@@ -84,12 +103,18 @@ pub fn runmode(mt: &MintTracker, book: &OperatorBook, supply: f64, fresh: f64, w
 }
 
 pub fn op_quality(book: &mut OperatorBook, mt: &MintTracker, c: &StructureCfg) -> bool {
+    if !not_farm(mt, c) {
+        return false;
+    }
     let (n, _, f2) = book.peak_stats(mt.ctx.op);
     n >= c.op_min_resolved && f2 >= c.op_min_frac_2x
 }
 
 /// First-candle-close members. Returns the member name that fired.
 pub fn at_b0(mt: &MintTracker, book: &OperatorBook, c: &StructureCfg) -> Option<&'static str> {
+    if !not_farm(mt, c) || !big_enough(mt, c) {
+        return None;
+    }
     if c.b0_runmode && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
         return Some("rm_b0");
     }

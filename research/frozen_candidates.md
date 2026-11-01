@@ -35,3 +35,22 @@ Same members and exits as D, plus:
 
 Discovery: 416 trades, +7.5%/trade (median +8.6%), 58% wins, halves +7.3% / +9.5%,
 17/23 hours positive, 55 operators, +7.76 SOL at 0.25 SOL.
+
+## Holdout result for A–E (data/pilot2, 15.8 h, Oct 30 20:45 → Oct 31 12:33 UTC)
+
+E: −0.2%/trade (86 trades); D: −4.1%/trade (305). The discovery edge did not replicate,
+not even in the same UTC hours (18–24 UTC: E +7.5% discovery vs −0.2% holdout). Rejected.
+
+## F: pre-registered before the forward test (forward = Nov 1 14:10 → 18:10 UTC)
+
+Selected because it is positive on BOTH days under realistic live conditions
+(entry always ≥ 1 slot late, 3.5M lamports priority per attempt on both legs + tips,
+sells 3–8 slots late), and its whole neighbourhood in the grid agrees:
+
+* signal `rm_g0_s0.5_f0.7_w7200_n2`: at the end of the creator's bundle, create-slot holders
+  ≥ 50% of supply, ≥ 70% of create-slot buyers freshly funded (≤ 2 h), ≥ 2 buyers
+* exit `q5`: hold 5 s (SL −25%)
+* discovery +1.3%/trade (141), holdout +1.6%/trade (38) at 0.25 SOL, realistic settings
+
+Forward success = mean net > 0 under the same realistic settings, and the family average
+(the 18 pairs positive on both days) > 0.

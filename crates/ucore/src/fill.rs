@@ -21,6 +21,14 @@ pub struct LatencyModel {
     pub next_slot_ahead: Vec<(u32, f64)>,
     /// Extra whole slots of delay (stress testing). 0 = measured behaviour.
     pub extra_slots: u32,
+    /// Optional extra adverse entry price move on top of the curve state: (fraction, weight).
+    /// `with_measured_penalty()` uses the 15 measured copy-trade fills (+1.5% … +19.2%).
+    #[serde(default)]
+    pub entry_penalty: Vec<(f64, f64)>,
+    /// Optional sell landing delay in whole slots: (slots after the trigger, weight).
+    /// `with_late_sells()` uses the measured 3–8 slots of the previous live system.
+    #[serde(default)]
+    pub sell_delay: Vec<(u32, f64)>,
 }
 
 impl Default for LatencyModel {
@@ -30,6 +38,8 @@ impl Default for LatencyModel {
             same_slot_between: vec![(2, 0.12), (3, 0.18), (4, 0.22), (5, 0.12), (6, 0.1), (8, 0.1), (10, 0.08), (13, 0.08)],
             next_slot_ahead: vec![(0, 0.55), (1, 0.25), (2, 0.12), (4, 0.08)],
             extra_slots: 0,
+            entry_penalty: Vec::new(),
+            sell_delay: Vec::new(),
         }
     }
 }
@@ -61,6 +71,37 @@ impl LatencyModel {
         } else {
             Landing::Later { offset: 1 + self.extra_slots, ahead: pick(&self.next_slot_ahead, rng.f64()) }
         }
+    }
+    /// Add the measured price-over-target distribution as an extra entry cost.
+    pub fn with_measured_penalty(mut self) -> LatencyModel {
+        self.entry_penalty = vec![(0.015, 1.0), (0.05, 2.0), (0.08, 2.0), (0.107, 3.0), (0.13, 3.0), (0.16, 2.0), (0.192, 2.0)];
+        self
+    }
+    pub fn with_late_sells(mut self) -> LatencyModel {
+        self.sell_delay = (3..=8).map(|s| (s, 1.0)).collect();
+        self
+    }
+    pub fn sample_sell(&self, rng: &mut Rng) -> Landing {
+        if self.sell_delay.is_empty() {
+            return self.sample(rng);
+        }
+        let off = pick(&self.sell_delay, rng.f64());
+        Landing::Later { offset: off, ahead: pick(&self.next_slot_ahead, rng.f64()) }
+    }
+    pub fn sample_penalty(&self, rng: &mut Rng) -> f64 {
+        if self.entry_penalty.is_empty() {
+            return 0.0;
+        }
+        let tot: f64 = self.entry_penalty.iter().map(|x| x.1).sum();
+        let u = rng.f64() * tot;
+        let mut acc = 0.0;
+        for (v, w) in &self.entry_penalty {
+            acc += w;
+            if u <= acc {
+                return *v;
+            }
+        }
+        self.entry_penalty.last().unwrap().0
     }
     /// Pessimistic variants for robustness checks.
     pub fn stressed(level: u32) -> LatencyModel {
@@ -109,6 +150,19 @@ impl Default for CostModel {
 }
 
 impl CostModel {
+    /// Costs measured on the previous live system: ~3.5M lamports of priority fee on every
+    /// attempt (landed or failed), plus a 0.001 SOL tip on landed transactions.
+    pub fn measured_live() -> CostModel {
+        CostModel {
+            base_fee: 5_000,
+            buy_cu_limit: 120_000,
+            buy_cu_price: 29_166_667,
+            buy_tip: 1_000_000,
+            sell_cu_limit: 100_000,
+            sell_cu_price: 35_000_000,
+            sell_tip: 1_000_000,
+        }
+    }
     fn prio(limit: u32, price: u64) -> u64 {
         (limit as u128 * price as u128 / 1_000_000) as u64
     }
