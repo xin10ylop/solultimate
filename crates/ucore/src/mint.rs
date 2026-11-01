@@ -141,6 +141,9 @@ pub struct MintTracker {
     pub n_buys: u32,
     pub n_sells: u32,
     pub max_price_after_b0: f64,
+    /// Creator's contiguous transaction group in the create slot (bundle) has ended.
+    pub g0_done: bool,
+    pub g0_end_tx: u32,
     /// Wallet-derived launch context (set by the brain / flow simulator at create time).
     pub ctx: LaunchCtx,
 }
@@ -215,6 +218,8 @@ impl MintTracker {
             n_buys: 0,
             n_sells: 0,
             max_price_after_b0: 0.0,
+            g0_done: false,
+            g0_end_tx: c.m.tx_idx,
             ctx: LaunchCtx::default(),
         }
     }

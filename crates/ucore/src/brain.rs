@@ -95,6 +95,8 @@ pub struct BrainCfg {
     /// Real entries from launch-type (context) records.
     pub context_entries: bool,
     pub flow: FlowCfg,
+    /// Launch-Structure Engine (candidate D).
+    pub structure: crate::structure::StructureCfg,
     pub shadow_stake_lamports: u64,
     pub shadow_mayhem: bool,
     pub gate: GateCfg,
@@ -125,6 +127,7 @@ impl Default for BrainCfg {
             operator_entries: false,
             context_entries: false,
             flow: FlowCfg::default(),
+            structure: crate::structure::StructureCfg::default(),
             shadow_stake_lamports: 100_000_000,
             shadow_mayhem: false,
             gate: GateCfg::default(),
@@ -252,6 +255,8 @@ pub struct Brain {
     flow_variant: Option<usize>,
     flow_last: FxHashMap<Pk, u64>,
     n_shadow: usize,
+    lse_hold: usize,
+    lse_trail: usize,
     pub book: OperatorBook,
     /// Context cohorts: launch "types" (dev buy × bundle × crowd × funding kind).
     pub ctx: FxHashMap<u64, OpStats>,
@@ -292,7 +297,28 @@ impl Brain {
         }
         let bankroll = cfg.risk.bankroll_lamports as i64;
         let n_shadow = cfg.variants.len();
+        let mut cfg = cfg;
+        // LSE exits are appended after the shadow variants (never shadowed per stage)
+        let lse = |name: &str, trail: Option<(f64, f64)>| ExitRules {
+            name: name.into(),
+            entry: Entry::Flow,
+            tp: vec![],
+            sl: -0.15,
+            sl_arm_slots: 0,
+            trail,
+            max_hold_slots: crate::pump::secs(15),
+            idle_slots: crate::pump::secs(15),
+            on_dump: crate::policy::DumpMode::Off,
+            dump_clock_q: None,
+            progress_exit: None,
+        };
+        cfg.variants.push(lse("lse_hold15", None));
+        cfg.variants.push(lse("lse_trail15", Some((0.20, 0.10))));
+        let lse_hold = cfg.variants.len() - 2;
+        let lse_trail = cfg.variants.len() - 1;
         Brain {
+            lse_hold,
+            lse_trail,
             flow_model: None,
             flow_variant: None,
             flow_last: FxHashMap::default(),
@@ -340,6 +366,90 @@ impl Brain {
 
     fn n_shadow_variants(&self) -> usize {
         self.n_shadow
+    }
+
+    /// Open a real position (risk checks, live intent). Returns true if opened.
+    fn enter_real(&mut self, mint: Pk, variant: usize, trigger_slot: u64, trigger_tx: u32, slip: f64, why: String) -> bool {
+        if !self.cfg.real_trading {
+            return false;
+        }
+        if self.launches.get(&mint).and_then(|l| l.real).is_some() {
+            return false;
+        }
+        let Some(mt) = self.mints.get(&mint) else { return false };
+        if mt.mayhem && !self.cfg.risk.allow_mayhem {
+            return false;
+        }
+        let (curve, fee_bps) = (mt.curve, mt.fee_bps);
+        let stake = self.cfg.risk.stake_lamports.min((self.bankroll.max(0) as f64 * self.cfg.risk.max_stake_frac) as u64);
+        self.counters.gate_pass += 1;
+        *self.counters.gate_reasons.entry(why.split(' ').next().unwrap_or("").to_string()).or_default() += 1;
+        let blocked = self.open_real.len() >= self.cfg.risk.max_open
+            || trigger_slot < self.paused_until
+            || self.day_pnl <= -(self.cfg.risk.daily_loss_limit_lamports as i64)
+            || stake < 10_000_000;
+        if blocked {
+            self.counters.risk_blocked += 1;
+            return false;
+        }
+        let mut cx = Self::exec_ctx(&self.cfg);
+        cx.buy_slip = slip;
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut p = Position::new_entry(id, mint, variant, false, stake, trigger_slot, trigger_tx, &curve, fee_bps, None, &cx, seed_of(&mint, trigger_slot ^ variant as u64, self.cfg.seed ^ 0x15E));
+        p.operator = self.launches.get(&mint).map(|l| l.op);
+        if self.cfg.mode == ExecMode::Live {
+            let o = p.pending.as_ref().unwrap();
+            self.intents.push(Intent::Buy { pos: id, mint, lamports: o.amount, min_tokens: o.min_out, fee_bps, reason: why });
+        }
+        self.counters.real_entries += 1;
+        self.by_mint.entry(mint).or_default().push(id);
+        self.open_real.insert(id);
+        self.positions.insert(id, p);
+        if let Some(l) = self.launches.get_mut(&mint) {
+            l.real = Some(id);
+            l.real_variant = Some(variant);
+        }
+        true
+    }
+
+    /// LSE: operator-quality entry at the end of the create transaction.
+    fn lse_create(&mut self, mint: Pk, slot: u64, tx: u32) {
+        let c = self.cfg.structure.clone();
+        if !c.enabled || !c.op_quality {
+            return;
+        }
+        let Some(mt) = self.mints.get(&mint) else { return };
+        if crate::structure::op_quality(&mut self.book, mt, &c) {
+            let v = self.lse_hold;
+            self.enter_real(mint, v, slot, tx, c.entry_slip, "lse_op_quality".into());
+        }
+    }
+
+    /// LSE: run-mode at the end of the creator's bundle.
+    fn lse_g0(&mut self, mint: Pk, slot: u64, gtx: u32) {
+        let c = self.cfg.structure.clone();
+        if !c.enabled || !c.g0_runmode {
+            return;
+        }
+        let Some(mt) = self.mints.get(&mint) else { return };
+        if crate::structure::runmode(mt, &self.book, c.g0_supply, c.g0_fresh, c.g0_window_s, c.g0_min_n) {
+            let v = self.lse_trail;
+            self.enter_real(mint, v, slot, gtx, c.entry_slip, "lse_g0_runmode".into());
+        }
+    }
+
+    /// LSE: first-candle-close members.
+    fn lse_b0(&mut self, mint: Pk, slot: u64) {
+        let c = self.cfg.structure.clone();
+        if !c.enabled {
+            return;
+        }
+        let Some(mt) = self.mints.get(&mint) else { return };
+        if let Some(m) = crate::structure::at_b0(mt, &self.book, &c) {
+            let v = self.lse_trail;
+            self.enter_real(mint, v, slot + 1, u32::MAX, c.entry_slip, format!("lse_{m}"));
+        }
     }
 
     /// Score the coin with the flow model and enter if it clears the threshold.
@@ -529,6 +639,26 @@ impl Brain {
     /// Decide at a trigger. Stage::Create = end of the create tx, Stage::Late = recurring
     /// insider seen in the create slot, Stage::Block0 = end of the create slot.
     fn decide(&mut self, mint: Pk, trigger_slot: u64, trigger_tx: u32, stage: Stage) {
+        self.decide_inner(mint, trigger_slot, trigger_tx, stage);
+        match stage {
+            Stage::Create => self.lse_create(mint, trigger_slot, trigger_tx),
+            Stage::Block0 => {
+                // group still open at slot end → bundle-end decision at the end of the slot
+                let open = self.mints.get(&mint).map(|m| !m.g0_done).unwrap_or(false);
+                if open {
+                    let gtx = self.mints.get(&mint).map(|m| m.g0_end_tx).unwrap_or(u32::MAX);
+                    if let Some(m) = self.mints.get_mut(&mint) {
+                        m.g0_done = true;
+                    }
+                    self.lse_g0(mint, trigger_slot - 1, gtx);
+                }
+                self.lse_b0(mint, trigger_slot - 1);
+            }
+            _ => {}
+        }
+    }
+
+    fn decide_inner(&mut self, mint: Pk, trigger_slot: u64, trigger_tx: u32, stage: Stage) {
         let Some(l) = self.launches.get(&mint).cloned() else { return };
         let nvar = self.cfg.variants.len();
         let prior = self.prior;
@@ -670,6 +800,13 @@ impl Brain {
     }
 
     fn on_trade(&mut self, t: &Trade) {
+        if !self.mints.contains_key(&t.mint) {
+            return;
+        }
+        self.on_trade_inner(t);
+    }
+
+    fn on_trade_inner(&mut self, t: &Trade) {
         let Some(mt) = self.mints.get_mut(&t.mint) else { return };
         // 1) pending orders that land before this trade
         let ids = self.by_mint.get(&t.mint).cloned().unwrap_or_default();
@@ -691,6 +828,21 @@ impl Brain {
                 }
             }
         }
+        // 1b) LSE: has the creator's bundle (contiguous group) just ended?
+        let mut g0_close = None;
+        if t.m.slot == mt.create_slot && !mt.g0_done {
+            if t.m.tx_idx <= mt.g0_end_tx + 1 {
+                mt.g0_end_tx = mt.g0_end_tx.max(t.m.tx_idx);
+            } else {
+                mt.g0_done = true;
+                g0_close = Some(mt.g0_end_tx);
+            }
+        }
+        if let Some(gtx) = g0_close {
+            // decide on the group as seen before this later trade (which lands ahead of us)
+            self.lse_g0(t.mint, t.m.slot, gtx);
+        }
+        let Some(mt) = self.mints.get_mut(&t.mint) else { return };
         // 2) apply the trade
         let create_slot = mt.create_slot;
         let s = mt.on_trade(t, &self.cfg.dump);

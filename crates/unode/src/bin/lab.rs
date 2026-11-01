@@ -129,6 +129,12 @@ enum Cmd {
         flow_label: Option<String>,
         #[arg(long)]
         flow_threshold: Option<f64>,
+        /// Enable the Launch-Structure Engine (candidate D) for real entries.
+        #[arg(long)]
+        lse: bool,
+        /// Stake per trade in lamports (overrides config).
+        #[arg(long)]
+        stake: Option<u64>,
     },
 }
 
@@ -153,7 +159,7 @@ fn main() -> Result<()> {
         Cmd::Mayhem { data, out } => mayhem(data, out),
         Cmd::Features { data, out, stake, stress, max_age_s, min_progress, max_progress, from_slot, to_slot } => export_features(data, out, stake, stress, (max_age_s, min_progress, max_progress), from_slot, to_slot),
         Cmd::Sweep { data, out, from_slot, to_slot } => sweep(data, out, from_slot, to_slot),
-        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot, flow_model, flow_label, flow_threshold } => {
+        Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot, flow_model, flow_label, flow_threshold, lse, stake } => {
             let mut cfg: BrainCfg = match config {
                 Some(p) => toml::from_str(&fs::read_to_string(p)?)?,
                 None => BrainCfg::default(),
@@ -163,6 +169,13 @@ fn main() -> Result<()> {
             }
             if no_mayhem {
                 cfg.shadow_mayhem = false;
+            }
+            if lse {
+                cfg.structure.enabled = true;
+            }
+            if let Some(st) = stake {
+                cfg.risk.stake_lamports = st;
+                cfg.risk.bankroll_lamports = cfg.risk.bankroll_lamports.max(st * 40);
             }
             if let Some(m) = flow_model {
                 cfg.flow.enabled = true;
