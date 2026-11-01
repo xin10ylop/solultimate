@@ -137,6 +137,12 @@ enum Cmd {
         /// Long-hold exit set.
         #[arg(long)]
         exit_long: bool,
+        /// Quick-exit grid (2–10 s holds × stop × small TP × dump reaction).
+        #[arg(long)]
+        exit_quick: bool,
+        /// Video exits for rugger sniping (fixed TP, natural / phantom stop, idle 150 s).
+        #[arg(long)]
+        exit_video: bool,
         /// Market: 0 SOL-quoted, 1 children (pump-coin / USDC quoted), 2 both.
         #[arg(long, default_value_t = 0)]
         market: u8,
@@ -192,7 +198,7 @@ fn main() -> Result<()> {
         Cmd::Mechanics { data } => mechanics(data),
         Cmd::ChildCheck { data } => child_check(data),
         Cmd::Tape { data, out } => tape(data, out),
-        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long, market } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long), dump_sensitive, penalty, create_slip, live_real, market),
+        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long, exit_quick, exit_video, market } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long, exit_quick, exit_video), dump_sensitive, penalty, create_slip, live_real, market),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
             let txt = fs::read_to_string(features)?;
@@ -918,9 +924,9 @@ fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool, market: u8) -> Result<()> {
+fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool, market: u8) -> Result<()> {
     use ucore::siglab::SigLab;
-    let (exit_grid, exit_lse, exit_long) = ex;
+    let (exit_grid, exit_lse, exit_long, exit_quick, exit_video) = ex;
     let mut lat = if penalty { LatencyModel::stressed(stress).with_measured_penalty() } else { LatencyModel::stressed(stress) };
     if live_real {
         lat = lat.with_late_sells();
@@ -937,6 +943,12 @@ fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: Stri
     }
     if exit_long {
         lab.exits = ucore::siglab::exit_grid_long();
+    }
+    if exit_quick {
+        lab.exits = ucore::siglab::exit_grid_quick();
+    }
+    if exit_video {
+        lab.exits = ucore::siglab::exit_grid_video();
     }
     if live_real {
         lab.costs = ucore::fill::CostModel::measured_live();

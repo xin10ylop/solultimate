@@ -54,3 +54,21 @@ sells 3–8 slots late), and its whole neighbourhood in the grid agrees:
 
 Forward success = mean net > 0 under the same realistic settings, and the family average
 (the 18 pairs positive on both days) > 0.
+
+## G (frozen 2026-11-01 23:58 UTC, before the gap period 464188821–464259868 and live data)
+
+Video "run mode" entry + quick exit, tuned on the quick-exit grid across holdout / discovery / forward.
+
+* Entry: first-candle close (`rm_b0`): create-slot buyers ≥ 2 (n2) holding ≥ 30% of supply (s0.3),
+  ≥ 30% of them fresh-funded within 1800 s before launch (f0.3, w1800). Same anti-farm and bundle
+  size rules as the signal lab.
+* Exit `k_h10_sl0.25_notp_off`: hold 10 s, stop −25%, no take-profit, no dump reaction.
+* Realism: `--live-real` (measured live costs 3.5M lamports priority + 0.001 SOL tip per leg, 3–8 slot
+  late sells), stake 0.25 SOL.
+* Family for robustness: s0.3 × f{0.3, 0.5} × w1800 × n{2, 3} × hold {8, 10} × stop {0.15, 0.25}.
+
+Results at freeze time (mean per trade / without best 2 / trades):
+holdout +5.9% / +3.2% / 79, discovery +10.1% / +8.8% / 204, forward +5.4% / −4.8% / 11.
+
+Pass rule for the gap period and each new day: trade-weighted mean > 0 and without-best-2 > 0
+for the frozen pair, and ≥ 60% of the family positive.

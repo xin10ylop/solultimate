@@ -57,6 +57,45 @@ pub fn signal_names() -> Vec<String> {
             }
         }
     }
+    // FOMO's "sniping ruggers": operator qualified on its own resolved history, snipe the next create
+    for n in RUG_MIN_N {
+        for f in RUG_MIN_F2X {
+            for t in ["", "_t"] {
+                v.push(format!("rug_n{n}_f{f}{t}"));
+            }
+        }
+    }
+    v
+}
+
+pub const RUG_MIN_N: [u32; 2] = [5, 10];
+pub const RUG_MIN_F2X: [f64; 2] = [0.33, 0.5];
+
+/// Video exits for rugger sniping: fixed TP (full), natural or phantom stop (armed after 10 s),
+/// sell after 150 s without activity, optional front-run on dump / consolidation, max hold.
+pub fn exit_grid_video() -> Vec<ExitRules> {
+    let mut v = Vec::new();
+    for tp in [0.5, 1.0, 1.5] {
+        for (stag, sl, arm) in [("nat", -0.95, 0u64), ("ph40", -0.40, 10), ("ph25", -0.25, 10)] {
+            for (dtag, dump) in [("off", DumpMode::Off), ("all", DumpMode::All)] {
+                for hold in [300u64, 900] {
+                    v.push(ExitRules {
+                        name: format!("v_tp{tp}_{stag}_{dtag}_h{hold}"),
+                        entry: Entry::Create,
+                        tp: vec![(tp, 1.0)],
+                        sl,
+                        sl_arm_slots: secs(arm),
+                        trail: None,
+                        max_hold_slots: secs(hold),
+                        idle_slots: secs(150),
+                        on_dump: dump,
+                        dump_clock_q: None,
+                        progress_exit: None,
+                    });
+                }
+            }
+        }
+    }
     v
 }
 
@@ -137,6 +176,33 @@ pub fn exit_grid() -> Vec<ExitRules> {
                         max_hold_slots: secs(hold),
                         idle_slots: secs(15),
                         on_dump: DumpMode::Off,
+                        dump_clock_q: None,
+                        progress_exit: None,
+                    });
+                }
+            }
+        }
+    }
+    v
+}
+
+/// Quick-exit grid around the best realistic exit (q5): hold × stop × small take-profit × dump reaction.
+pub fn exit_grid_quick() -> Vec<ExitRules> {
+    let mut v = Vec::new();
+    for hold in [2u64, 3, 4, 5, 6, 8, 10] {
+        for sl in [-0.15, -0.25, -0.60] {
+            for tp in [None, Some(0.08), Some(0.15)] {
+                for (dtag, dump) in [("off", DumpMode::Off), ("hard", DumpMode::Hard), ("all", DumpMode::All)] {
+                    v.push(ExitRules {
+                        name: format!("k_h{hold}_sl{}_{}_{dtag}", -sl, tp.map(|x| format!("tp{x}")).unwrap_or_else(|| "notp".into())),
+                        entry: Entry::Create,
+                        tp: tp.map(|x| vec![(x, 1.0)]).unwrap_or_default(),
+                        sl,
+                        sl_arm_slots: 0,
+                        trail: None,
+                        max_hold_slots: secs(hold),
+                        idle_slots: secs(15),
+                        on_dump: dump,
                         dump_clock_q: None,
                         progress_exit: None,
                     });
@@ -358,8 +424,20 @@ impl SigLab {
         let Some(mt) = self.mints.get(&mint) else { return };
         let op = mt.ctx.op;
         let (n, _, f2) = self.book.peak_stats(op);
+        let how = mt.ctx.how;
         if n >= 3 && f2 >= 0.5 {
             self.fire("op_quality_create", mint, slot, tx, self.create_slip);
+        }
+        for nn in RUG_MIN_N {
+            for ff in RUG_MIN_F2X {
+                if n >= nn && f2 >= ff {
+                    self.fire(&format!("rug_n{nn}_f{ff}"), mint, slot, tx, self.create_slip);
+                    // traceable funding scheme and a fresh dev wallet (not a prolific single-address dev)
+                    if matches!(how, 2 | 3 | 4 | 5) {
+                        self.fire(&format!("rug_n{nn}_f{ff}_t"), mint, slot, tx, self.create_slip);
+                    }
+                }
+            }
         }
     }
 
