@@ -182,3 +182,36 @@ Dry-powder wallets bought the coin later in only 1.3–2.1% of launches. The for
 PUMP buyback (checked as a scheduled flow): one authority sweeps all 8 buyback vaults about every
 2 minutes (≈ 884,000 SOL claimed in total), so buying is spread in small chunks against PUMP's deep
 liquidity. Negligible impact.
+
+## 10. Anchored-token arbitrage, funding harvest, incentives, cohort latency (all rejected)
+
+**Anchored quote tokens vs Hyperliquid** (`research/anchor/`). Pump coins quoted in wXMR, WBTC,
+DOGE, HYPE, tokenized stocks and pre-IPO tokens route flow through those tokens' thin Solana pools;
+the anchors trade deep on Hyperliquid (crypto perps and `xyz` stock / pre-IPO perps).
+* Historical minute candles (3.5 days): DOGE / HYPE / WBTC gaps median 0.07–0.3%, gone within a
+  minute; wXMR gaps persist 15–25 min, ~4 per day above 1%, capacity of a few thousand USD.
+* Live executable quotes (19 pairs, Jupiter $500 / $3,000 vs Hyperliquid book, all fees): taking
+  both sides at once always loses (−0.1% … −4%); standing one-sided offsets of 0.05–0.2% are the
+  perps' normal basis; even buying each token at its best moment and selling at its best moment
+  in the window lost on every pair (gaps swing 0.05–0.2% vs 0.2–0.5% round-trip cost).
+* SOL → coin → SOL Jupiter round trips for memecoins quoted in these tokens: 0.91–0.994.
+
+**Funding harvest** (spot long + perp short): last 30 days median funding 9% APR, best coin 31%;
+rotating into the leaders loses to costs (−38% … −112% APR). Safe and consistent, not very profitable
+in this regime.
+
+**PUMP volume incentives**: both global volume accumulators are empty (program off): no fee rebate.
+
+**Fee-only creating** (no dev buy, no supply held): such launches get almost no volume (median
+0.00–0.01 SOL, mean creator fee 0.001–0.012 SOL vs ~0.02 SOL to create).
+
+**Copying the consistent cohort's exact decisions with our latency** (`latency_decomp.py`):
+
+| our position vs theirs | discovery | holdout | forward |
+|---|---|---|---|
+| their own fill | +3.7% | +2.9% | +3.7% |
+| next trade behind them | +1.4% | +0.6% | +1.4% |
+| 2 trades later | +0.2% | −0.6% | +0.1% |
+| 4 trades later / next slot | −0.3% | −1.2% | −0.4% |
+
+Their edge is position in the order flow, not logic we could learn.
