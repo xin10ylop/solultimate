@@ -213,6 +213,29 @@ pub fn exit_grid_quick() -> Vec<ExitRules> {
     v
 }
 
+/// Hold-time sweep without take-profit (quick-exit grid ended at 10 s).
+pub fn exit_grid_hold() -> Vec<ExitRules> {
+    let mut v = Vec::new();
+    for hold in [8u64, 10, 12, 15, 20, 30, 45] {
+        for sl in [-0.25, -0.60] {
+            v.push(ExitRules {
+                name: format!("k_h{hold}_sl{}_notp_off", -sl),
+                entry: Entry::Create,
+                tp: vec![],
+                sl,
+                sl_arm_slots: 0,
+                trail: None,
+                max_hold_slots: secs(hold),
+                idle_slots: secs(15),
+                on_dump: DumpMode::Off,
+                dump_clock_q: None,
+                progress_exit: None,
+            });
+        }
+    }
+    v
+}
+
 pub fn exit_styles() -> Vec<ExitRules> {
     let r = |name: &str, tp: Vec<(f64, f64)>, sl: f64, trail: Option<(f64, f64)>, hold_s: u64, dump: DumpMode, pe: Option<f64>| ExitRules {
         name: name.into(),

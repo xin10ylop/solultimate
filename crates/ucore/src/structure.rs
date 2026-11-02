@@ -50,6 +50,12 @@ pub struct StructureCfg {
     pub max_op_prior: u32,
     /// Bundle-based members need at least this many create-slot buyers (0 = off).
     pub min_bundle_buyers: usize,
+    /// First-candle run mode only for launches attributed to an operator with earlier launches
+    /// (FOMO: snipe known ruggers; unknown operators lost in every period).
+    pub b0_known_op: bool,
+    /// First-candle run mode only below this market cap in SOL at decision time (0 = off;
+    /// FOMO's rule 2: first candle ≤ ~$15K ≈ 160 SOL).
+    pub b0_max_mcap_sol: f64,
 }
 
 impl Default for StructureCfg {
@@ -86,6 +92,8 @@ impl Default for StructureCfg {
             create_exit_sl: -0.15,
             max_op_prior: 20,
             min_bundle_buyers: 12,
+            b0_known_op: false,
+            b0_max_mcap_sol: 0.0,
         }
     }
 }
@@ -129,7 +137,9 @@ pub fn at_b0(mt: &MintTracker, book: &OperatorBook, c: &StructureCfg) -> Option<
     if !not_farm(mt, c) || !big_enough(mt, c) {
         return None;
     }
-    if c.b0_runmode && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
+    let known_ok = !c.b0_known_op || mt.ctx.how != 0;
+    let mcap_ok = c.b0_max_mcap_sol <= 0.0 || mt.mcap_sol() <= c.b0_max_mcap_sol;
+    if c.b0_runmode && known_ok && mcap_ok && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
         return Some("rm_b0");
     }
     let n = mt.block0.len();
