@@ -1022,6 +1022,7 @@ fn mechanics(data: Vec<PathBuf>) -> Result<()> {
     let mut trades_by_kind: FxHashMap<&'static str, (u64, u64)> = FxHashMap::default();
     let mut fee_by_tier: FxHashMap<u32, (u64, f64)> = FxHashMap::default();
     let mut ix_mix: FxHashMap<u8, u64> = FxHashMap::default();
+    let mut child_fee: FxHashMap<u32, (u64, rustc_hash::FxHashSet<Pk>)> = FxHashMap::default();
     for d in &data {
         for blk in StoreReader::open(d)? {
             for e in &blk {
@@ -1046,6 +1047,11 @@ fn mechanics(data: Vec<PathBuf>) -> Result<()> {
                         let e2 = trades_by_kind.entry(kind).or_default();
                         e2.0 += 1;
                         e2.1 += t.sol;
+                        if !t.sol_quote {
+                            let f = child_fee.entry(t.fee_bps).or_default();
+                            f.0 += 1;
+                            f.1.insert(t.mint);
+                        }
                         if t.sol_quote && !t.mayhem {
                             let mc = (t.vsol as f64 / t.vtok.max(1) as f64) * 1e6; // SOL mcap ≈ price * 1e15 / 1e9
                             let f = fee_by_tier.entry(t.fee_bps).or_default();
@@ -1088,6 +1094,11 @@ fn mechanics(data: Vec<PathBuf>) -> Result<()> {
         println!("fee {bps} bps: {n} trades, mean mcap {:.1} SOL", mc / *n as f64);
     }
     println!("instruction mix: {ix_mix:?}");
+    let mut cf: Vec<_> = child_fee.iter().map(|(k, v)| (*k, v.0, v.1.len())).collect();
+    cf.sort_by(|a, b| b.1.cmp(&a.1));
+    for (bps, n, coins) in cf.iter().take(15) {
+        println!("child fee {bps} bps: {n} trades on {coins} coins");
+    }
     Ok(())
 }
 

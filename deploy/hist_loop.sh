@@ -15,7 +15,7 @@ for E in $EPOCHS; do
   first=0
   while [ ! -f "$OUT/DONE" ]; do
     echo "$(date -u +%FT%TZ) epoch $E start" >> "$ROOT/data/hist/progress.log"
-    "$BIN" --epoch "$E" --out "$OUT" --slim --resume --to-slot "$TO" --conns 24 >> "$OUT.log" 2>&1
+    "$BIN" --epoch "$E" --out "$OUT" --slim --resume --to-slot "$TO" --conns ${CONNS:-48} --chunk-mb ${CHUNK:-16} >> "$OUT.log" 2>&1
     if [ -f "$OUT/DONE" ]; then
       echo "$(date -u +%FT%TZ) epoch $E done $(cat "$OUT/DONE")" >> "$ROOT/data/hist/progress.log"
     else

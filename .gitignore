@@ -9,3 +9,4 @@
 /reports/*
 !/reports/wf/
 !/reports/pilot/
+__pycache__/
