@@ -149,3 +149,13 @@ the verdict uses the full run.
 > 0 at racing fees, overall mean without the best 2 trades > 0. Then, and only then, the same
 candidate goes to the validation days already used for G2 (Oct 24–29, seen only as G2 aggregates)
 as a second check, and to paper trading on new live days.
+
+## G3c / G2i (frozen 2026-11-02 15:20 UTC): copy3's idle-team rule
+
+copy3's strongest live rule: buy only when at least one tax-exempt team wallet did NOT buy in the
+launch second (all team wallets buying at once = the bundle that dumps within seconds).
+pump.fun analog (`structure::idle_team`): wallets freshly funded within 30 min before launch by the
+non-hub funders of the create-slot buyers or of the dev, that did not buy in the create slot; ≥ 1 required.
+* **G3c** = G3b + idle-team ≥ 1 (`config/eval/G3c.toml`), the faithful copy3 analog.
+* **G2i** = G2 + idle-team ≥ 1 (`config/eval/G2i.toml`), isolates the filter.
+Same test data, replay, scoring and pass rule as G3a / G3b (development days 1058–1064).

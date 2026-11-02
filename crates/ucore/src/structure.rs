@@ -4,6 +4,7 @@
 //! Conditions are shared by the brain (live/backtest) and documented in
 //! research/frozen_candidates.md (candidate D).
 
+use crate::pk::Pk;
 use crate::book::OperatorBook;
 use crate::mint::MintTracker;
 use crate::pump::secs;
@@ -59,6 +60,10 @@ pub struct StructureCfg {
     /// Dump reaction of the structure exits: 0 off, 1 hard signals (big sell, consolidation /
     /// insider transfer-out, operator wallet), 2 any dump-like signal.
     pub exit_dump: u8,
+    /// copy3's "idle team wallet" rule: first-candle run mode only when at least this many wallets
+    /// freshly funded (within `b0_window_s` before launch) by the create-slot buyers' / dev's
+    /// non-hub funders did NOT buy in the create slot (0 = off).
+    pub b0_min_idle: usize,
 }
 
 impl Default for StructureCfg {
@@ -98,6 +103,7 @@ impl Default for StructureCfg {
             b0_known_op: false,
             b0_max_mcap_sol: 0.0,
             exit_dump: 0,
+            b0_min_idle: 0,
         }
     }
 }
@@ -128,6 +134,30 @@ pub fn runmode(mt: &MintTracker, book: &OperatorBook, supply: f64, fresh: f64, w
     fresh_buyers(mt, book, window_s) as f64 / n as f64 >= fresh
 }
 
+/// Team wallets (funded by the same non-hub funders as the create-slot buyers or the dev, within
+/// `window_s` before launch) that did not buy in the create slot.
+pub fn idle_team(mt: &MintTracker, book: &OperatorBook, window_s: u64) -> usize {
+    let cs = mt.create_slot;
+    let lo = cs.saturating_sub(secs(window_s));
+    let mut funders: Vec<Pk> = Vec::new();
+    for w in mt.block0.keys().chain(std::iter::once(&mt.dev)) {
+        if let Some((f, _, _)) = book.funding_of(w) {
+            if !book.is_hub(&f) && !funders.contains(&f) {
+                funders.push(f);
+            }
+        }
+    }
+    let mut idle: Vec<&Pk> = Vec::new();
+    for f in &funders {
+        for w in book.funded_by(f, lo, cs) {
+            if *w != mt.dev && !mt.block0.contains_key(w) && !idle.contains(&w) {
+                idle.push(w);
+            }
+        }
+    }
+    idle.len()
+}
+
 pub fn op_quality(book: &mut OperatorBook, mt: &MintTracker, c: &StructureCfg) -> bool {
     if !not_farm(mt, c) {
         return false;
@@ -143,7 +173,8 @@ pub fn at_b0(mt: &MintTracker, book: &OperatorBook, c: &StructureCfg) -> Option<
     }
     let known_ok = !c.b0_known_op || mt.ctx.how != 0;
     let mcap_ok = c.b0_max_mcap_sol <= 0.0 || mt.mcap_sol() <= c.b0_max_mcap_sol;
-    if c.b0_runmode && known_ok && mcap_ok && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
+    let idle_ok = c.b0_min_idle == 0 || idle_team(mt, book, c.b0_window_s) >= c.b0_min_idle;
+    if c.b0_runmode && known_ok && mcap_ok && idle_ok && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
         return Some("rm_b0");
     }
     let n = mt.block0.len();

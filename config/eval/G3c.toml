@@ -1,0 +1,39 @@
+# Candidate G3c (frozen 2026-11-02 ~15:20 UTC): G3b + copy3 idle-team rule: >= 1 wallet funded by the create-slot buyers'/dev's non-hub funders
+# within 30 min before launch did not buy in the create slot.
+# Candidate G3b (frozen 2026-11-02 ~14:25 UTC): G3a + copy3-style exits (trailing arms +20%, sells on a
+# 15-point giveback, stop -20%, timeout 60 s, exit on hard dump signals incl. insider transfer-out).
+# G3a: G2 + copy3 risk rules (team cool-off 5 min after a loss,
+# 4 losses in a row -> no entries for 10 min). Entry and exits unchanged.
+# Base: G2 (frozen 2026-11-02): G + known operator + first-candle cap (FOMO rules).
+# Mirrors signal-lab pair rm_b0_s0.3_f0.3_w1800_n2 × k_h10_sl0.25_notp_off (no anti-farm, no bundle-size floor).
+[structure]
+enabled = true
+op_quality = false
+g0_runmode = false
+big_bundle = false
+fresh_bundle = false
+b0_runmode = true
+b0_supply = 0.3
+b0_fresh = 0.3
+b0_window_s = 1800
+b0_min_n = 2
+max_op_prior = 0
+min_bundle_buyers = 0
+entry_slip = 1.0
+exit_hold_s = 60
+exit_sl = -0.20
+exit_trail_act = 0.20
+exit_trail_give = 0.15
+exit_dump = 1
+b0_known_op = true
+b0_max_mcap_sol = 160.0
+b0_min_idle = 1
+[risk]
+bankroll_lamports = 100_000_000_000
+stake_lamports = 250_000_000
+max_stake_frac = 0.05
+max_open = 6
+daily_loss_limit_lamports = 100_000_000_000
+max_consec_losses = 4
+pause_slots_after_streak = 2843   # 10 min
+op_cooloff_slots = 1421           # 5 min

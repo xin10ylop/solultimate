@@ -1,0 +1,30 @@
+# Candidate G2i (frozen 2026-11-02 ~15:20 UTC): G2 + copy3 idle-team rule only (isolates the filter).
+# Candidate G2 (frozen 2026-11-02): G + known operator + first-candle cap (FOMO rules).
+# Mirrors signal-lab pair rm_b0_s0.3_f0.3_w1800_n2 × k_h10_sl0.25_notp_off (no anti-farm, no bundle-size floor).
+[structure]
+enabled = true
+op_quality = false
+g0_runmode = false
+big_bundle = false
+fresh_bundle = false
+b0_runmode = true
+b0_supply = 0.3
+b0_fresh = 0.3
+b0_window_s = 1800
+b0_min_n = 2
+max_op_prior = 0
+min_bundle_buyers = 0
+entry_slip = 1.0
+exit_hold_s = 10
+exit_sl = -0.25
+exit_trail_act = 0.0
+b0_known_op = true
+b0_max_mcap_sol = 160.0
+b0_min_idle = 1
+[risk]
+bankroll_lamports = 100_000_000_000
+stake_lamports = 250_000_000
+max_stake_frac = 0.05
+max_open = 6
+daily_loss_limit_lamports = 100_000_000_000
+max_consec_losses = 1_000_000

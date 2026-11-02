@@ -249,6 +249,8 @@ pub struct OperatorBook {
     nodes: FxHashMap<NodeKey, u32>,
     pub stats: FxHashMap<u32, OpStats>,
     funding: FxHashMap<Pk, FundRec>,
+    /// funder → wallets it freshly funded (wallet, slot), same TTL as `funding`
+    funded: FxHashMap<Pk, Vec<(Pk, u64)>>,
     funders: FxHashMap<Pk, FunderStat>,
     /// insider wallet → (operator root at last update, count, total create-slot appearances)
     insider_index: FxHashMap<Pk, (u32, u16, u16)>,
@@ -265,6 +267,7 @@ impl Default for OperatorBook {
             nodes: FxHashMap::default(),
             stats: FxHashMap::default(),
             funding: FxHashMap::default(),
+            funded: FxHashMap::default(),
             funders: FxHashMap::default(),
             insider_index: FxHashMap::default(),
             hub_min_fresh: 40.0,
@@ -350,11 +353,18 @@ impl OperatorBook {
             f.last_decay = slot;
         }
         f.fresh += 1.0;
-        self.funding.entry(to).or_insert(FundRec { from, lamports, slot });
+        if !self.funding.contains_key(&to) {
+            self.funding.insert(to, FundRec { from, lamports, slot });
+            self.funded.entry(from).or_default().push((to, slot));
+        }
         if slot.saturating_sub(self.last_prune) > 9_000 {
             self.last_prune = slot;
             let ttl = self.funding_ttl_slots;
             self.funding.retain(|_, r| slot.saturating_sub(r.slot) <= ttl);
+            self.funded.retain(|_, v| {
+                v.retain(|(_, s)| slot.saturating_sub(*s) <= ttl);
+                !v.is_empty()
+            });
             self.funders.retain(|_, f| f.fresh > 0.05 || slot.saturating_sub(f.last_decay) < crate::pump::SLOTS_PER_DAY);
         }
     }
@@ -416,6 +426,11 @@ impl OperatorBook {
         }
         s.last_slot = slot;
         (root, how)
+    }
+
+    /// Wallets freshly funded by `funder` in [from_slot, to_slot].
+    pub fn funded_by(&self, funder: &Pk, from_slot: u64, to_slot: u64) -> impl Iterator<Item = &Pk> {
+        self.funded.get(funder).into_iter().flatten().filter(move |(_, s)| *s >= from_slot && *s <= to_slot).map(|(w, _)| w)
     }
 
     /// First fresh-wallet funding seen for `w`: (sender, lamports, slot).
