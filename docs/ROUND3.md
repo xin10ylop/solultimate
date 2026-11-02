@@ -368,3 +368,37 @@ only with a co-located latency stack, and already decaying. On Solana the equiva
 exist, which is consistent with every Solana result in this repo. The strategic lesson the user named —
 "new mechanics create structural edges" — is exactly right, and it points off Solana (to a snipe-tax
 launchpad) rather than to another pump.fun rule.
+
+## 15. What the public evidence says (web search, 2026-11-02)
+
+The user asked to check the web for an answer. The least promotional sources — open-source backtesters
+that published their own negative results — agree with everything measured in this repo:
+
+* **Retail / directional / copy-trading: documented to lose, fee-adjusted.**
+  - An open-source Solana/Base paper-trader (leex0x0/memecoin-paper-trader): *"every strategy lost over
+    the last year"*; best was a dip-buy at 41% win, still −14%.
+  - A 2-minute-delay copy-trading test: **−41% per token across 93 tokens** (tokenpost).
+  - A "buy every new pool at +30 min" study: p = 0.35 after the search — "Zero Edge".
+  - Bitquery: of ~2.9M Solana memecoin buyers, **74% ended with less than they put in** within 2 weeks.
+  This is the same result as our ~20 unseen days: no launch-snipe variant is tradeable.
+
+* **The one documented profitable activity is MEV / atomic arbitrage — and it is an infrastructure
+  race, not a signal.** Aggregate Jito searcher profit is large ($480M+ cumulative, Helius ~$142M of
+  arb), but it concentrates among a few co-located searchers; tips reportedly eat 50–60% of gross.
+  The strongest independent data point is another serious open-source project (bhavi-g/solana-arb-bot,
+  simulate-before-send, fee- and tip-aware, 159 tests) that concluded a **documented, data-backed
+  NO-GO**: zero net-profitable opportunities after costs. Atomic arb is "safe" per trade (it reverts
+  if unprofitable) and consistent in count — the user's three criteria — but it is only reachable by
+  winning the latency/tip auction, exactly the category copy3's Pons snipe race lives in.
+
+* **LP fee farming on PumpSwap: not an edge.** 0.20% of volume to LPs, but graduation **burns the LP
+  tokens** (position non-withdrawable), impermanent loss is real, and the only circulated return
+  ($100–125/day) assumes sole ownership of a $50K-volume pool and ignores IL and rug risk.
+
+**Synthesis.** The money in this ecosystem goes to (1) creators/insiders, (2) a handful of
+infrastructure-dominant MEV searchers, (3) the launchpad's own fees. Every retail-accessible,
+backtestable directional strategy is negative-sum after fees — independently, repeatedly, and here.
+The edges that exist are structural + latency (copy3's snipe-tax race; atomic arb), reachable only by
+winning an infrastructure race on a venue whose mechanic thins the field — not by a rule we can
+backtest into profit. That is the honest answer to "find something safe, consistent and very
+profitable" on Solana launches: it is not there in the form sought, and the public record says so too.
