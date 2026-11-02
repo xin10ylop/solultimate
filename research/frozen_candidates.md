@@ -123,3 +123,9 @@ cfe8fcf / 51d1d42).
   (forward, gap, live) plus every new day the recorder adds.
 * Only G / G2 aggregates (per day) are looked at on validation days; their trade-level details are
   studied on development days only.
+
+### Archive verdict (2026-11-02 06:45 UTC)
+
+G2 on the 6 scored unseen days Oct 24–29 (warm-up Oct 23): 849 trades, −8.0% per trade at racing fees
+(−5.4% normal), 1 of 6 days profitable, −16.9 SOL at 0.25 SOL, max drawdown 19.0 SOL. **Fail.**
+G: 1,416 trades, −8.5%, 0 of 6 days. **Fail.** Both rejected; not re-tuned on these days.

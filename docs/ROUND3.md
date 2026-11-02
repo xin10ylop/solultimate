@@ -287,17 +287,21 @@ layout (version byte 0x81); recent epochs contain no vote transactions.
 **G / G2 on unseen days (pre-registered, nothing changed).** Continuous replay through the live
 engine with measured live costs, book carried across days:
 
-| unseen day (UTC) | G2 trades | G2 per trade, racing fees | G2 normal fees | G2 PnL @0.25 | G per trade |
+| unseen day (UTC) | G2 trades | G2 racing fees | G2 normal fees | G2 PnL @0.25 SOL | G racing fees |
 |---|---|---|---|---|---|
-| Oct 27 | 243 | −12.5% | −9.9% | −7.57 SOL | −9.9% |
-| Oct 28 | 181 | −6.0% | −3.4% | −2.71 SOL | −4.3% |
-| Oct 29 | 193 | +1.7% | +4.3% | +0.84 SOL | −8.1% |
-| Oct 30 (to 20:45) | ~190 | negative | negative | | negative |
+| Oct 24 | 76 | −0.3% | +2.4% | −0.05 SOL | −1.1% |
+| Oct 25 | 8 | −36.4% | −33.9% | −0.73 SOL | −10.0% |
+| Oct 26 | 143 | −18.9% | −16.3% | −6.77 SOL | −16.1% |
+| Oct 27 | 245 | −12.4% | −9.8% | −7.59 SOL | −9.9% |
+| Oct 28 | 185 | −5.9% | −3.3% | −2.72 SOL | −4.3% |
+| Oct 29 | 192 | +2.0% | +4.6% | +0.94 SOL | −8.0% |
+| **6 days** | **849** | **−8.0%** | **−5.4%** | **−16.9 SOL** (max drawdown 19.0) | **−8.5%** (0 of 6 days) |
 
-G2 fails its rule (needs ≥ 70% profitable days; 1 of 3 so far, −6.4%/trade over 805 trades). The
-profitable in-sample days (Oct 30 evening → Nov 1) were one regime. Losses come in operator bursts:
-e.g. one operator dumped on all 11 of his coins within 26 minutes (−72.5% average, the −25% stop
-cannot protect when the dump lands before our sell).
+(Oct 23 = warm-up of the continuous replay over Oct 23 → Oct 30 20:45; Oct 30 is partial and
+negative too.) G2 fails: 1 of 6 days profitable at racing fees, 2 of 6 at normal fees, 5-day losing
+streak. The profitable in-sample days (Oct 30 evening → Nov 1) were one regime. Losses come in
+operator bursts: e.g. one operator dumped on all 11 of his coins within 26 minutes (−72.5% average;
+the −25% stop cannot protect when the dump lands before our sell).
 
 **Follow the money over many days** (`wallets`: every bonding-curve position, after curve fees,
 transaction fees and tips; leftovers marked as if all holders sold together). Oct 16–18:
