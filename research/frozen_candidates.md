@@ -72,3 +72,18 @@ holdout +5.9% / +3.2% / 79, discovery +10.1% / +8.8% / 204, forward +5.4% / −4
 
 Pass rule for the gap period and each new day: trade-weighted mean > 0 and without-best-2 > 0
 for the frozen pair, and ≥ 60% of the family positive.
+
+## G2 (frozen 2026-11-02 ~00:35 UTC, before the gap period and live data)
+
+G plus two rules from the videos, both consistent across holdout / discovery / forward:
+* known operator only: launch attributed to an operator with ≥ 1 earlier launch (`how` ≠ 0);
+  unknown operators lost in every period (−1.4% / −3.2% / −5.2%);
+* first-candle cap: entry market cap ≤ 160 SOL (≈ $15K; FOMO's rule 2).
+Exit unchanged: hold 10 s, stop −25%, no TP, no dump reaction.
+
+Scoring (all costs, refused buys charged at their fee): racing fees 0.009 SOL / round trip and normal
+fees 0.0026 SOL / round trip. At freeze, racing: holdout +3.6% (58), discovery +10.1% (151),
+forward +15.2% (5); normal: +6.2% / +12.7% / +17.8%.
+
+Pass rule for the gap period and each new day: mean > 0 at racing fees, without-best-2 > 0 at
+normal fees, ≥ 10 trades per day.
