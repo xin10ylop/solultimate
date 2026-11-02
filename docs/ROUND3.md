@@ -274,3 +274,49 @@ racing fees (0.009 SOL / round trip) unless noted:
 G2 total: 223 trades, ≈ +4.2 SOL at 0.25 SOL stakes in ~51 h, but 3.65 SOL of it on the discovery
 day. Positive in four periods, negative in the newest (tiny) one. **Not proven**: it needs the
 per-day test on many more days. `config/trader.G2.paper.toml` runs it in paper mode on live data.
+
+## 13. Proving it without a box: 15 archived days (Old Faithful)
+
+The public RPCs are too slow for weeks of history (~6 slots/s). The ledger archive
+(`files.old-faithful.net`, one 300–650 GB CAR file per epoch) streams at ~170 MB/s per process here, so
+`carstream` (new) imports a day in ~40 min, decoding with the same `decode_tx` as the recorder.
+Parity vs RPC data on 1,500 slots: identical blocks, launches, fundings, transfers and trades
+(except non-SOL quote fields the old pilot2 decoder zeroed). ~40% of transactions use the new v1
+layout (version byte 0x81); recent epochs contain no vote transactions.
+
+**G / G2 on unseen days (pre-registered, nothing changed).** Continuous replay through the live
+engine with measured live costs, book carried across days:
+
+| unseen day (UTC) | G2 trades | G2 per trade, racing fees | G2 normal fees | G2 PnL @0.25 | G per trade |
+|---|---|---|---|---|---|
+| Oct 27 | 243 | −12.5% | −9.9% | −7.57 SOL | −9.9% |
+| Oct 28 | 181 | −6.0% | −3.4% | −2.71 SOL | −4.3% |
+| Oct 29 | 193 | +1.7% | +4.3% | +0.84 SOL | −8.1% |
+| Oct 30 (to 20:45) | ~190 | negative | negative | | negative |
+
+G2 fails its rule (needs ≥ 70% profitable days; 1 of 3 so far, −6.4%/trade over 805 trades). The
+profitable in-sample days (Oct 30 evening → Nov 1) were one regime. Losses come in operator bursts:
+e.g. one operator dumped on all 11 of his coins within 26 minutes (−72.5% average, the −25% stop
+cannot protect when the dump lands before our sell).
+
+**Follow the money over many days** (`wallets`: every bonding-curve position, after curve fees,
+transaction fees and tips; leftovers marked as if all holders sold together). Oct 16–18:
+
+| style | ROI |
+|---|---|
+| devs (creators) | +33% to +37% |
+| create-slot bundles | +4% to +7% |
+| buyers ≤ 2 slots after create | −5% to +0% |
+| flash takers (< 10 s) | −4% to −0% |
+| short holds (< 2 min) | −6% to −8% |
+| long holds | −12% to −13% |
+
+The ecosystem as a whole loses ~5% of what it spends; takers fund the operators. Taker skill
+does persist: wallets profitable on two days are profitable on the third 60–73% of the time
+(baseline 17%), but at +2% ROI. Entering where those winners buy, with our landing and generic exits,
+loses 2.4–3.4% per trade (random moments: −3.6% to −5.5%): their edge is speed and exit execution.
+
+**Holder rewards (new mechanic)**: 13% of launches route 0.3% of volume to holders. Over a coin's whole
+life that is a median 1.7% (p90 3.8%) of the SOL in its curve: less than one round trip of fees.
+The mayhem agent trades a median ~1 SOL per coin, so mayhem volume pays holders next to nothing.
+Rejected.
