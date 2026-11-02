@@ -32,6 +32,8 @@ pub struct RiskCfg {
     pub allow_mayhem: bool,
     /// Never enter above this market cap (SOL) when the operator has no first-candle history.
     pub default_max_entry_mcap: f64,
+    /// After a losing trade, skip the same operator for this many slots (0 = off).
+    pub op_cooloff_slots: u64,
 }
 
 impl Default for RiskCfg {
@@ -46,6 +48,7 @@ impl Default for RiskCfg {
             pause_slots_after_streak: crate::pump::secs(3 * 3600),
             allow_mayhem: false,
             default_max_entry_mcap: 80.0,
+            op_cooloff_slots: 0,
         }
     }
 }
@@ -245,6 +248,7 @@ pub struct Counters {
     pub real_entries: u64,
     pub real_refused: u64,
     pub risk_blocked: u64,
+    pub op_cooloff_blocked: u64,
     pub how: FxHashMap<String, u64>,
     pub gate_reasons: FxHashMap<String, u64>,
 }
@@ -275,6 +279,8 @@ pub struct Brain {
     pub day_pnl: i64,
     pub consec_losses: u32,
     pub paused_until: u64,
+    /// operator root -> slot until which it is skipped after a loss
+    pub op_cool: FxHashMap<u32, u64>,
     open_real: FxHashSet<u64>,
     // outputs
     pub closed_real: Vec<ClosedTrade>,
@@ -300,6 +306,11 @@ impl Brain {
         let mut cfg = cfg;
         // LSE exits are appended after the shadow variants (never shadowed per stage)
         let sc = cfg.structure.clone();
+        let dump_mode = match sc.exit_dump {
+            1 => crate::policy::DumpMode::Hard,
+            2 => crate::policy::DumpMode::All,
+            _ => crate::policy::DumpMode::Off,
+        };
         let lse = |name: &str, trail: Option<(f64, f64)>, hold: u64, sl: f64| ExitRules {
             name: name.into(),
             entry: Entry::Flow,
@@ -309,7 +320,7 @@ impl Brain {
             trail,
             max_hold_slots: crate::pump::secs(hold),
             idle_slots: crate::pump::secs(15),
-            on_dump: crate::policy::DumpMode::Off,
+            on_dump: dump_mode,
             dump_clock_q: None,
             progress_exit: None,
         };
@@ -342,6 +353,7 @@ impl Brain {
             day_pnl: 0,
             consec_losses: 0,
             paused_until: 0,
+            op_cool: FxHashMap::default(),
             open_real: FxHashSet::default(),
             closed_real: Vec::new(),
             rows: Vec::new(),
@@ -386,12 +398,23 @@ impl Brain {
         let stake = self.cfg.risk.stake_lamports.min((self.bankroll.max(0) as f64 * self.cfg.risk.max_stake_frac) as u64);
         self.counters.gate_pass += 1;
         *self.counters.gate_reasons.entry(why.split(' ').next().unwrap_or("").to_string()).or_default() += 1;
+        let cooling = match self.launches.get(&mint).map(|l| l.op) {
+            Some(op) if self.cfg.risk.op_cooloff_slots > 0 => {
+                let root = self.book.find(op);
+                self.op_cool.get(&root).map(|u| trigger_slot < *u).unwrap_or(false)
+            }
+            _ => false,
+        };
         let blocked = self.open_real.len() >= self.cfg.risk.max_open
             || trigger_slot < self.paused_until
+            || cooling
             || self.day_pnl <= -(self.cfg.risk.daily_loss_limit_lamports as i64)
             || stake < 10_000_000;
         if blocked {
             self.counters.risk_blocked += 1;
+            if cooling {
+                self.counters.op_cooloff_blocked += 1;
+            }
             return false;
         }
         let mut cx = Self::exec_ctx(&self.cfg);
@@ -1005,6 +1028,10 @@ impl Brain {
                 self.bankroll += rec.pnl;
                 self.day_pnl += rec.pnl;
                 if rec.pnl <= 0 {
+                    if let (Some(op), true) = (p.operator, self.cfg.risk.op_cooloff_slots > 0) {
+                        let root = self.book.find(op);
+                        self.op_cool.insert(root, b.slot + self.cfg.risk.op_cooloff_slots);
+                    }
                     self.consec_losses += 1;
                     if self.consec_losses >= self.cfg.risk.max_consec_losses {
                         self.paused_until = b.slot + self.cfg.risk.pause_slots_after_streak;

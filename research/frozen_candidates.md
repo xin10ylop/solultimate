@@ -129,3 +129,23 @@ cfe8fcf / 51d1d42).
 G2 on the 6 scored unseen days Oct 24–29 (warm-up Oct 23): 849 trades, −8.0% per trade at racing fees
 (−5.4% normal), 1 of 6 days profitable, −16.9 SOL at 0.25 SOL, max drawdown 19.0 SOL. **Fail.**
 G: 1,416 trades, −8.5%, 0 of 6 days. **Fail.** Both rejected; not re-tuned on these days.
+
+## G3a / G3b (frozen 2026-11-02 14:25 UTC, rules imported from the copy3 HoodSniper live system)
+
+Nothing below was tuned on Solana data; the three additions are copy3's live risk/exit rules:
+* **G3a** = G2 + team cool-off (after a losing trade, skip the same operator for 5 min) + loss-streak
+  pause (4 losses in a row → no new entries for 10 min). `config/eval/G3a.toml`.
+* **G3b** = G3a + exits: trailing stop arms at +20% and sells on a 15-point giveback, stop −20%,
+  timeout 60 s, exit on hard dump signals (big sell, insider consolidation / transfer-out, operator
+  wallet, transfer-fed seller). `config/eval/G3b.toml`.
+
+**Test data**: archive development days, epochs 1058–1064 (Oct 15 → Oct 22), on which neither G2 nor
+G3 has ever been replayed. Continuous replay (`lab replay --lse --live-costs --late-sells`), first
+epoch = warm-up, per-UTC-day scoring with `research/archive/score_days.py`. G2 is replayed on the
+same days as the reference. An interim run with 1059 as warm-up may be reported while 1058 imports;
+the verdict uses the full run.
+
+**Pass** (each candidate on its own): ≥ 70% of scored days profitable at racing fees, overall mean
+> 0 at racing fees, overall mean without the best 2 trades > 0. Then, and only then, the same
+candidate goes to the validation days already used for G2 (Oct 24–29, seen only as G2 aggregates)
+as a second check, and to paper trading on new live days.

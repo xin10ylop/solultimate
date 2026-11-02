@@ -56,6 +56,9 @@ pub struct StructureCfg {
     /// First-candle run mode only below this market cap in SOL at decision time (0 = off;
     /// FOMO's rule 2: first candle ≤ ~$15K ≈ 160 SOL).
     pub b0_max_mcap_sol: f64,
+    /// Dump reaction of the structure exits: 0 off, 1 hard signals (big sell, consolidation /
+    /// insider transfer-out, operator wallet), 2 any dump-like signal.
+    pub exit_dump: u8,
 }
 
 impl Default for StructureCfg {
@@ -94,6 +97,7 @@ impl Default for StructureCfg {
             min_bundle_buyers: 12,
             b0_known_op: false,
             b0_max_mcap_sol: 0.0,
+            exit_dump: 0,
         }
     }
 }
