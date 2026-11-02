@@ -337,3 +337,34 @@ On exactly their Oct 18 coins our own create entry loses with every one of 170 e
 Their edge is position at the top of the block and discretionary exits, i.e. execution, not a
 selection rule we could learn. Identity-free flow model (LightGBM, 320k decision points, 3 days,
 time split): no positive bucket out of sample (top 1%: −1.6% to −5.9%).
+
+
+## 14. Why copy3 works and this does not — the mechanic is the edge (2026-11-02)
+
+copy3 (HoodSniper) trades profitably, but **not on Solana**: it snipes the **Pons V2** launchpad on
+**Robinhood Chain**, whose curve charges a snipe tax that decays **99% → 6.2% (+1 s) → 0.19% (+2 s) → 0**
+over three seconds. That tax gate is the whole edge: almost nobody buys in the 99% second, so a bot
+co-located in AWS Ohio (3 ms from the sequencer) that lands first in the +1 s block buys ahead of the
+field at 6%, and the launch's tax-exempt "team" wallets flag which launches are operator plays. Its own
+STATE.md shows even that edge fading (qualifying launches ~100/day → ~30/day, per-trade +10% → −2.2%,
+the public feed IP-banned).
+
+**That mechanic has no analog on Solana's busy launchpads.** Measured on the full Nov-1 archive day:
+- pump.fun: no snipe tax; anyone buys from block 0. Earlier sections showed the first-second race is
+  already saturated — ordinary snipers lose, ~1% of bots win on raw speed and exit execution.
+- Meteora **Dynamic Bonding Curve** (the launchpad family with decaying-fee tooling, `ucore::dbc`):
+  **2,788 launches, 109/h, and 99.7% charge a flat fee (median 0.25%) from second one.** Only 9
+  launches (0.3%) used a decaying early fee. There is no tax window to be first into.
+
+So copy3's recipe (be first into the +1 s block, ride the exempt team, exit in seconds) is **structural
+to Pons V2**, not a selection rule we can port. Porting its *rules* to pump.fun confirms this: operator
+cool-off, loss-streak pause and trailing/dump exits all stay negative on unseen days (§ frozen_candidates).
+The one piece that transfers as signal is the **idle-team rule** — enter only when ≥ 1 tax-exempt-style
+team wallet did *not* buy at launch (all buying at once = the bundle that dumps): it lifts the win rate
+31% → 42% and more than halves the loss per trade, but pump.fun launches still lose on average.
+
+**Conclusion.** The edge copy3 exploits is a chain+launchpad mechanic (Pons V2's snipe tax), reachable
+only with a co-located latency stack, and already decaying. On Solana the equivalent mechanic does not
+exist, which is consistent with every Solana result in this repo. The strategic lesson the user named —
+"new mechanics create structural edges" — is exactly right, and it points off Solana (to a snipe-tax
+launchpad) rather than to another pump.fun rule.

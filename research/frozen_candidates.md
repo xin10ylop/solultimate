@@ -159,3 +159,17 @@ non-hub funders of the create-slot buyers or of the dev, that did not buy in the
 * **G3c** = G3b + idle-team ≥ 1 (`config/eval/G3c.toml`), the faithful copy3 analog.
 * **G2i** = G2 + idle-team ≥ 1 (`config/eval/G2i.toml`), isolates the filter.
 Same test data, replay, scoring and pass rule as G3a / G3b (development days 1058–1064).
+
+### Verdict on the copy3-derived candidates (2026-11-02, development days Oct 16–21)
+
+Continuous replay, live costs, per UTC day. None pass (0/4 profitable days each):
+
+| candidate | what it adds to G2 | trades/day | mean (racing) | win | PnL @0.25 |
+|---|---|---|---|---|---|
+| G2 | — | 69 | −12.2% | 31% | −8.4 SOL |
+| G3a | operator cool-off + loss-streak pause | 40 | −14.9% | 28% | −6.0 SOL |
+| G3b | G3a + trailing/dump exits | 43 | −14.9% | 27% | −6.4 SOL |
+| G3c | G3b + idle-team ≥ 1 | 16 | −13.6% | 33% | −2.2 SOL |
+| **G2i** | **idle-team ≥ 1 only** | 36 | **−5.0%** | **42%** | −1.8 SOL |
+
+The idle-team rule is the one that carries real signal (G2i: win rate 31%→42%, loss per trade more than halved), confirming copy3's "all team wallets buying at once = the bundle that dumps" observation transfers to pump.fun. But it is not enough: still negative every day. The pause/cool-off/exit rules only cut volume. Rejected as strategies; the idle-team feature is kept.
