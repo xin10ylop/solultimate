@@ -256,3 +256,21 @@ At racing fees G is marginal (fails "without best 2" on holdout and forward); at
 (the −15% stop variant passes "without best 2" in all three periods). Normal fees are plausible
 because G does not depend on queue position, which must be confirmed live. Pending: out-of-sample
 gap period, live recorder days, measured fills.
+
+### G and G2: out-of-sample and live results (live brain, continuous replay, all costs)
+
+G2 = G + known operator + first candle ≤ 160 SOL (both FOMO rules, frozen before the gap period).
+Continuous replay over holdout → discovery → forward → gap → live (operator history carried over),
+racing fees (0.009 SOL / round trip) unless noted:
+
+| period | G trades | G mean (w/o best 2) | G2 trades | G2 mean (w/o best 2) | G2 normal fees |
+|---|---|---|---|---|---|
+| holdout 15.8 h | 90 | +0.7% (−1.6%) | 58 | +2.1% (−1.6%) | +4.7% |
+| discovery 25.6 h | 227 | +5.3% (+4.2%) | 152 | +9.6% (+8.1%) | +12.2% |
+| forward 4 h | 12 | +1.6% (−7.1%) | 5 | +14.2% (−6.5%) | +16.8% |
+| **gap 4.2 h (out of sample)** | 10 | **+8.1% (+1.2%)** | 5 | **+13.5% (+1.8%)** | +16.0% |
+| live ~1.3 h | 8 | −6.8% | 3 | −14.7% | −12.1% |
+
+G2 total: 223 trades, ≈ +4.2 SOL at 0.25 SOL stakes in ~51 h, but 3.65 SOL of it on the discovery
+day. Positive in four periods, negative in the newest (tiny) one. **Not proven**: it needs the
+per-day test on many more days. `config/trader.G2.paper.toml` runs it in paper mode on live data.

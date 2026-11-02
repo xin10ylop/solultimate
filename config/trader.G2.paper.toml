@@ -1,0 +1,97 @@
+# solultimate trader — copy to config/trader.toml and fill in.
+# Start with mode = "paper" (live stream, simulated fills, nothing is sent).
+
+mode = "paper"                       # keep "paper" for G2 until the per-day test passes
+wallet_keypair = "/etc/solultimate/hot-wallet.json"   # solana-keygen JSON, chmod 600
+rpc_url = "https://YOUR-TRITON-RPC.rpcpool.com/YOUR_TOKEN"
+grpc_endpoint = "https://YOUR-TRITON-GRPC.rpcpool.com"
+grpc_x_token = "YOUR_X_TOKEN"
+firehose = true                      # needed for fresh-wallet funding lineage
+
+# Replay recorded history first so the operator book is warm before the first trade.
+warmup_data = ["data/live"]
+
+kill_file = "STOP"                   # `touch STOP` → sell everything, no new entries, exit when flat
+max_wallet_lamports = 3_000_000_000  # refuse to start live if the hot wallet holds more (blast radius)
+max_stream_lag_ms = 1500             # no new entries while the feed is stale
+expire_slots = 20                    # buy not seen after N slots (~4 s) → treated as failed (late fills are sold)
+journal = "data/journal.jsonl"
+
+# Nozomi tip accounts are used round-robin; override here if Temporal publishes new ones.
+# tip_accounts = ["noz..."]
+
+[[senders]]
+name = "nozomi-fra"
+url = "http://fra2.nozomi.temporal.xyz/?c=YOUR_NOZOMI_KEY"
+ping_url = "http://fra2.nozomi.temporal.xyz/ping"
+
+# [[senders]]
+# name = "triton-rpc"
+# url = "https://YOUR-TRITON-RPC.rpcpool.com/YOUR_TOKEN"
+
+# telegram_bot_token = "123456:ABC..."
+# telegram_chat_id = "123456789"
+
+# Strategy / risk. Everything not set here uses config/brain.default.toml values
+# (print them with `lab replay --dump-config ...`).
+[brain]
+real_trading = true
+operator_entries = false             # identity-based plays rotate; research only
+context_entries = false
+
+# Launch-Structure Engine (best family so far; regime-dependent; NOT validated out of sample).
+# Enable only in paper mode until it passes the per-day test in RUNBOOK §2.
+[brain.structure]
+# Candidate G2 (frozen 2026-11-02, research/frozen_candidates.md): FOMO run mode at first-candle close,
+# known operators only, first candle <= 160 SOL market cap, 10 s hold, -25% stop, no TP.
+# PAPER ONLY until RUNBOOK §2 (per-day test) passes on >= 14 days.
+enabled = true
+op_quality = false
+g0_runmode = false
+big_bundle = false
+fresh_bundle = false
+b0_runmode = true
+b0_supply = 0.3
+b0_fresh = 0.3
+b0_window_s = 1800
+b0_min_n = 2
+b0_known_op = true
+b0_max_mcap_sol = 160.0
+max_op_prior = 0
+min_bundle_buyers = 0
+entry_slip = 1.0
+exit_hold_s = 10
+exit_sl = -0.25
+exit_trail_act = 0.0
+
+# Order-flow model (research; enable only after RUNBOOK §2 passes)
+[brain.flow]
+enabled = false
+model_path = "research/models/flow.json"
+label = "h60"                        # exit rule the model was trained for
+threshold = 0.03                     # min predicted net return (after fees + slippage)
+min_age_s = 2
+max_age_s = 3600
+min_progress = 0.3
+max_progress = 0.97
+eval_every_s = 1
+
+[brain.risk]
+bankroll_lamports = 2_000_000_000
+stake_lamports = 250_000_000         # paper sizing used in the G2 tests (0.25 SOL)
+max_stake_frac = 0.05
+max_open = 3
+daily_loss_limit_lamports = 300_000_000
+max_consec_losses = 5
+pause_slots_after_streak = 51_000    # ~3 h at ~211 ms/slot
+allow_mayhem = false
+default_max_entry_mcap = 80.0
+
+[brain.costs]
+base_fee = 5000
+buy_cu_limit = 120000
+buy_cu_price = 3000000               # micro-lamports per CU
+buy_tip = 1000000                    # 0.001 SOL
+sell_cu_limit = 100000
+sell_cu_price = 2000000
+sell_tip = 1000000

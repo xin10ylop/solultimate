@@ -510,4 +510,15 @@ mod tests {
         assert_eq!(c.brain.costs.buy_tip, 1_000_000);
         assert!(!c.brain.variants.is_empty());
     }
+
+    #[test]
+    fn g2_paper_config_parses() {
+        let s = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/trader.G2.paper.toml")).unwrap();
+        let c: super::TraderCfg = toml::from_str(&s).unwrap();
+        let st = &c.brain.structure;
+        assert!(st.enabled && st.b0_runmode && st.b0_known_op && !st.g0_runmode && !st.op_quality);
+        assert_eq!(st.b0_max_mcap_sol, 160.0);
+        assert_eq!(st.exit_hold_s, 10);
+        assert_eq!(c.brain.risk.stake_lamports, 250_000_000);
+    }
 }

@@ -159,3 +159,14 @@ the cake").
 
 Keep the main treasury in a different wallet (ideally hardware). The hot wallet holds only
 what the current ladder step needs.
+
+## G2 paper trading (current candidate)
+
+```
+./target/release/trader --config config/trader.G2.paper.toml      # mode = "paper": nothing is sent
+./target/release/recorder --out data/live --firehose --amm        # in parallel, for replays and the per-day test
+```
+Judge it per UTC day with `research/follow_money/score_periods.py` on the trader journal or on a
+replay of the recorded day (`lab replay --config config/eval/G2.toml --lse --live-costs --late-sells`).
+Go to canary (0.1 SOL, 1 open position) only after ≥ 14 days with ≥ 70% of days profitable at
+racing fees and positive without the best 2 trades.
