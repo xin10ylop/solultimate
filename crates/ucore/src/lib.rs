@@ -3,6 +3,7 @@ pub mod amm;
 pub mod book;
 pub mod brain;
 pub mod curve;
+pub mod dbc;
 pub mod event;
 pub mod fill;
 pub mod gbm;

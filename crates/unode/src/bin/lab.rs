@@ -355,7 +355,7 @@ fn check(data: PathBuf) -> Result<()> {
                     }
                     *xfer_by_mint.entry(x.mint).or_default() += 1;
                 }
-                Ev::Complete(_) | Ev::Pool(_) => {}
+                Ev::Complete(_) | Ev::Pool(_) | Ev::Dbc(_) => {}
             }
         }
     }

@@ -438,7 +438,7 @@ impl SigLab {
                 self.check(c.mint, c.m.slot, c.m.tx_idx, None);
             }
             Ev::Block(b) => self.on_block(b),
-            Ev::Pool(_) => {}
+            Ev::Pool(_) | Ev::Dbc(_) => {}
         }
     }
 

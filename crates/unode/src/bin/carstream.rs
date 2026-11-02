@@ -84,6 +84,12 @@ struct Args {
     rotate: u64,
     #[arg(long)]
     amm: bool,
+    /// Decode Meteora DBC launches and swaps.
+    #[arg(long)]
+    dbc: bool,
+    /// Keep only DBC events (and block stats) in the output.
+    #[arg(long)]
+    only_dbc: bool,
     #[arg(long, default_value_t = 3)]
     workers: usize,
     /// Stop after this many bytes (testing).
@@ -456,7 +462,7 @@ fn shortvec(b: &[u8], p: &mut usize) -> Result<usize> {
 }
 
 fn needs_data(p: &Pk) -> bool {
-    *p == pump::PUMP_PROGRAM || *p == pump::SYSTEM_PROGRAM || *p == pump::COMPUTE_BUDGET || *p == ucore::amm::PUMP_AMM
+    *p == pump::PUMP_PROGRAM || *p == pump::SYSTEM_PROGRAM || *p == pump::COMPUTE_BUDGET || *p == ucore::amm::PUMP_AMM || *p == ucore::dbc::DBC_PROGRAM
 }
 
 #[derive(Default)]
@@ -841,7 +847,7 @@ fn main() -> Result<()> {
     }
     drop(rtx);
 
-    let cfg = DecodeCfg { decode_amm: a.amm, ..DecodeCfg::default() };
+    let cfg = DecodeCfg { decode_amm: a.amm, decode_dbc: a.dbc || a.only_dbc, ..DecodeCfg::default() };
     let mut dst = DecodeState::default();
     let mut writer: Option<(u64, StoreWriter)> = None;
     let mut reorder: BTreeMap<u64, (SlotBatch, Vec<TxView>, Stats)> = BTreeMap::new();
@@ -896,6 +902,9 @@ fn main() -> Result<()> {
                     Ev::TokXfer(x) if a.slim => x.m.sig = Sig::default(),
                     _ => {}
                 }
+            }
+            if a.only_dbc {
+                evs.retain(|e| matches!(e, Ev::Dbc(_)));
             }
             evs.push(Ev::Block(stat));
             n_ev += evs.len() as u64;

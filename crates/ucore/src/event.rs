@@ -133,6 +133,14 @@ pub enum Ev {
     Block(BlockStat),
     /// PumpSwap event (appended last: older stores stay readable).
     Pool(PoolEv),
+    /// Meteora DBC launch / swap (appended last).
+    Dbc(DbcEv),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DbcEv {
+    pub m: Meta,
+    pub e: crate::dbc::RawDbc,
 }
 
 /// PumpSwap event with tx meta. `mint` is resolved from the instruction accounts or the
@@ -153,6 +161,7 @@ impl Ev {
             Ev::TokXfer(e) => e.m.slot,
             Ev::Block(b) => b.slot,
             Ev::Pool(p) => p.m.slot,
+            Ev::Dbc(p) => p.m.slot,
         }
     }
     pub fn meta(&self) -> Option<&Meta> {
@@ -164,6 +173,7 @@ impl Ev {
             Ev::TokXfer(e) => Some(&e.m),
             Ev::Block(_) => None,
             Ev::Pool(p) => Some(&p.m),
+            Ev::Dbc(p) => Some(&p.m),
         }
     }
     pub fn mint(&self) -> Option<Pk> {

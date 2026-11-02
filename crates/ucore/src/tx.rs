@@ -97,6 +97,8 @@ pub struct DecodeCfg {
     pub active_mint_slots: u64,
     /// Also decode PumpSwap (graduated coin) events.
     pub decode_amm: bool,
+    /// Also decode Meteora DBC launches and swaps.
+    pub decode_dbc: bool,
 }
 
 impl Default for DecodeCfg {
@@ -107,6 +109,7 @@ impl Default for DecodeCfg {
             watch: FxHashSet::default(),
             active_mint_slots: crate::pump::secs(3600),
             decode_amm: false,
+            decode_dbc: false,
         }
     }
 }
@@ -117,6 +120,8 @@ pub struct DecodeState {
     last_prune: u64,
     /// PumpSwap pool → (base mint, quote mint), learned from instructions and pool creations.
     pub pools: FxHashMap<Pk, (Pk, Pk)>,
+    /// Meteora DBC pool → (base mint, quote mint), learned from swap / init instruction accounts.
+    pub dbc_pools: FxHashMap<Pk, (Pk, Pk)>,
 }
 
 impl DecodeState {
@@ -214,6 +219,7 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
             Ev::Fund(x) => x.m.ev_idx = ev_idx,
             Ev::TokXfer(x) => x.m.ev_idx = ev_idx,
             Ev::Pool(x) => x.m.ev_idx = ev_idx,
+            Ev::Dbc(x) => x.m.ev_idx = ev_idx,
             Ev::Block(_) => {}
         }
         ev_idx = ev_idx.wrapping_add(1);
@@ -349,6 +355,58 @@ pub fn decode_tx(tx: &TxView, cfg: &DecodeCfg, st: &mut DecodeState, out: &mut V
                     }
                 }
             }
+        }
+    }
+
+    // ---- Meteora DBC launches and swaps
+    if cfg.decode_dbc && tx.touches(&crate::dbc::DBC_PROGRAM) {
+        use crate::dbc::*;
+        let learn = |ix: &Ix, st: &mut DecodeState| {
+            if tx.key(ix.program) != DBC_PROGRAM || ix.data.len() < 8 {
+                return;
+            }
+            let d: [u8; 8] = ix.data[..8].try_into().unwrap();
+            if (d == IX_SWAP || d == IX_SWAP2) && ix.accounts.len() >= 9 {
+                st.dbc_pools.insert(tx.key(ix.accounts[2]), (tx.key(ix.accounts[7]), tx.key(ix.accounts[8])));
+            } else if (d == IX_INIT_SPL || d == IX_INIT_2022) && ix.accounts.len() >= 6 {
+                st.dbc_pools.insert(tx.key(ix.accounts[5]), (tx.key(ix.accounts[3]), tx.key(ix.accounts[4])));
+            }
+        };
+        for ix in &tx.ixs {
+            learn(ix, st);
+        }
+        for (_, inner) in &tx.inner {
+            for ix in inner {
+                learn(ix, st);
+            }
+        }
+        let mut found: Vec<RawDbc> = Vec::new();
+        for (_, inner) in &tx.inner {
+            for ix in inner {
+                if tx.key(ix.program) == DBC_PROGRAM && ix.data.len() > 16 && ix.data[..8] == pump::EVENT_IX_TAG {
+                    if let Some(e) = decode_event(&ix.data[8..]) {
+                        // one swap emits EvtSwap / EvtSwap2 / EvtSwap3 back to back: keep the newest
+                        if let Some(prev) = found.last() {
+                            if e.kind == DbcKind::Swap && prev.kind == DbcKind::Swap && prev.pool == e.pool && prev.dir == e.dir && e.ver > prev.ver {
+                                found.pop();
+                            }
+                        }
+                        found.push(e);
+                    }
+                }
+            }
+        }
+        for mut e in found {
+            if let Some((b, q)) = st.dbc_pools.get(&e.pool) {
+                if e.base_mint == Pk::default() {
+                    e.base_mint = *b;
+                }
+                e.quote_mint = *q;
+            }
+            if e.kind != DbcKind::Init {
+                e.user = signer;
+            }
+            push(out, Ev::Dbc(crate::event::DbcEv { m: meta.clone(), e }));
         }
     }
 
