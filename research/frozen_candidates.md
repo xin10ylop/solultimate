@@ -185,5 +185,15 @@ Dev-day result: +1.9%/trade, 58% win, 74 trades — the first positive expectanc
 Caveat recorded before the validation test: the mean leans on Oct 21 (9 trades, +27%); Oct 19 was
 −4.5%, Oct 20 ~flat. The win-rate lift (42%→58%) is broad; the mean may be tail-driven.
 
-**Validation (Oct 24–29, never touched): [pending this run].** Pass = mean > 0 at racing fees and
-≥ 50% of days positive. If it fails, G4 is overfit to Oct 21 and rejected.
+**Validation (Oct 24–29, never touched): FAIL.** −10.7%/trade, 48% win, 2/6 days positive, −2.35 SOL
+over 88 trades. Worse than G2i. The dev-day edge was Oct-21 overfitting, exactly as the caveat warned.
+The prolific-operator filter is rejected.
+
+### What validation DID confirm: the idle-team filter generalizes (but isn't enough)
+
+On the same never-touched days, G2i beats G2 the same way it did on dev: win rate 45%→49%, loss per
+trade −8.0%→−7.0%, and it keeps the good days while cutting the bad ones (Oct 29 +9.8% vs G2 +2.0%;
+Oct 26 −5.0 SOL vs −6.8). So copy3's "a team wallet sat out" signal is real and transfers. But across
+~20 unseen days (dev + validation + the earlier holdout/forward/gap/live) every launch-snipe variant
+is negative overall: the edge shows up only on scattered good days (Oct 29, Oct 30 eve–Nov 1) that
+cannot be identified in advance. idle-team is kept as a feature; no variant is tradeable.
