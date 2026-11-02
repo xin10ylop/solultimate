@@ -14,7 +14,7 @@ while true; do
   if [ -z "$F" ]; then sleep 20; continue; fi
   END=$((F - 10))
   if [ $((END - START)) -ge 2500 ]; then
-    if "$BIN" --rpc "$RPC" --start "$START" --end "$END" --out "$OUT" --concurrency 16 --amm >> "$OUT/record.log" 2>&1; then
+    if "$BIN" --rpc "$RPC" --start "$START" --end "$END" --out "$OUT" --concurrency 16 ${AMM---amm} >> "$OUT/record.log" 2>&1; then
       START=$END
       echo "$START" > "$OUT/next_slot.txt"
       echo "$(date -u +%FT%TZ) recorded up to $END" >> "$OUT/progress.log"

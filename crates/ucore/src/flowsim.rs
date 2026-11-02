@@ -37,6 +37,8 @@ pub struct FlowRow {
     pub time: i64,
     pub slot: u64,
     pub mint: Pk,
+    /// 1 = decision taken right after a buy by a tagged wallet (research: where do winners buy?)
+    pub tag: u8,
     pub feats: Vec<f32>,
     /// per label: (net return excl. fixed costs, fixed lamports, exit reason, failed entry)
     pub res: Vec<(f64, u64, &'static str, bool)>,
@@ -70,6 +72,10 @@ pub struct FlowSim {
     pub max_progress: f64,
     next_id: u64,
     now_time: i64,
+    /// Wallets whose buys force a decision row (tag = 1).
+    pub tag_wallets: rustc_hash::FxHashSet<Pk>,
+    /// Fraction of regular (untagged) decision rows kept (deterministic by mint and slot).
+    pub regular_keep: f64,
 }
 
 impl FlowSim {
@@ -97,6 +103,8 @@ impl FlowSim {
             max_progress: 0.85,
             next_id: 1,
             now_time: 0,
+            tag_wallets: rustc_hash::FxHashSet::default(),
+            regular_keep: 1.0,
         }
     }
 
@@ -168,11 +176,19 @@ impl FlowSim {
         if age < self.min_age_slots || age > self.max_age_slots || mt.completed || pr > self.max_progress || pr < self.min_progress {
             return;
         }
+        let tagged = t.is_buy && self.tag_wallets.contains(&t.user);
         let le = self.last_eval.entry(t.mint).or_insert((0, 0));
-        if le.1 >= self.max_evals_per_coin || (le.0 != 0 && t.m.slot < le.0 + self.eval_every_slots) {
+        let regular = !(le.1 >= self.max_evals_per_coin || (le.0 != 0 && t.m.slot < le.0 + self.eval_every_slots));
+        if regular {
+            *le = (t.m.slot, le.1 + 1);
+        }
+        let keep = self.regular_keep >= 1.0 || {
+            let h = u64::from_le_bytes(t.mint.0[8..16].try_into().unwrap()) ^ t.m.slot.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            ((h >> 11) as f64 / (1u64 << 53) as f64) < self.regular_keep
+        };
+        if !tagged && !(regular && keep) {
             return;
         }
-        *le = (t.m.slot, le.1 + 1);
         let feats = features(mt, t.m.slot, &mut self.book);
         let curve = mt.curve;
         let fee = mt.fee_bps;
@@ -197,7 +213,7 @@ impl FlowSim {
         self.rows.insert(
             row_id,
             Acc {
-                row: FlowRow { time: self.now_time, slot: t.m.slot, mint: t.mint, feats, res: vec![(f64::NAN, 0, "", false); n] },
+                row: FlowRow { time: self.now_time, slot: t.m.slot, mint: t.mint, tag: tagged as u8, feats, res: vec![(f64::NAN, 0, "", false); n] },
                 left: n,
             },
         );

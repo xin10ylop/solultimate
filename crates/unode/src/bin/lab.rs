@@ -67,6 +67,12 @@ enum Cmd {
         from_slot: u64,
         #[arg(long, default_value_t = u64::MAX)]
         to_slot: u64,
+        /// File with one wallet (base58) per line: each buy by one of them adds a tagged decision row.
+        #[arg(long)]
+        tag_wallets: Option<PathBuf>,
+        /// Fraction of regular decision rows kept.
+        #[arg(long, default_value_t = 1.0)]
+        regular_keep: f64,
     },
     /// Inventory of protocol mechanics in the data: quote coins, fee tiers, holder rewards, instruction mix.
     Mechanics {
@@ -216,7 +222,13 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Mayhem { data, out } => mayhem(data, out),
-        Cmd::Features { data, out, stake, stress, max_age_s, min_progress, max_progress, from_slot, to_slot } => export_features(data, out, stake, stress, (max_age_s, min_progress, max_progress), from_slot, to_slot),
+        Cmd::Features { data, out, stake, stress, max_age_s, min_progress, max_progress, from_slot, to_slot, tag_wallets, regular_keep } => {
+            let tags = match tag_wallets {
+                Some(p) => fs::read_to_string(p)?.split_whitespace().filter_map(|s| Pk::from_b58(s).ok()).collect(),
+                None => Default::default(),
+            };
+            export_features(data, out, stake, stress, (max_age_s, min_progress, max_progress), from_slot, to_slot, tags, regular_keep)
+        }
         Cmd::Sweep { data, out, from_slot, to_slot } => sweep(data, out, from_slot, to_slot),
         Cmd::Replay { data, out, config, stress, no_mayhem, dump_config, from_slot, to_slot, flow_model, flow_label, flow_threshold, lse, stake, penalty, live_costs, late_sells } => {
             let mut cfg: BrainCfg = match config {
@@ -841,15 +853,17 @@ fn sweep(data: PathBuf, out: PathBuf, from_slot: u64, to_slot: u64) -> Result<()
     Ok(())
 }
 
-fn export_features(data: PathBuf, out: PathBuf, stake: u64, stress: u32, win: (u64, f64, f64), from_slot: u64, to_slot: u64) -> Result<()> {
+fn export_features(data: PathBuf, out: PathBuf, stake: u64, stress: u32, win: (u64, f64, f64), from_slot: u64, to_slot: u64, tags: rustc_hash::FxHashSet<Pk>, regular_keep: f64) -> Result<()> {
     use ucore::flowsim::FlowSim;
     let mut sim = FlowSim::new(stake, LatencyModel::stressed(stress));
+    sim.tag_wallets = tags;
+    sim.regular_keep = regular_keep;
     sim.max_age_slots = ucore::pump::secs(win.0);
     sim.min_progress = win.1;
     sim.max_progress = win.2;
     let names: Vec<String> = sim.labels.iter().map(|l| l.name.clone()).collect();
     let mut w = std::io::BufWriter::new(fs::File::create(&out)?);
-    write!(w, "time,slot,mint")?;
+    write!(w, "time,slot,mint,tag")?;
     for n in ucore::flow::FEATURE_NAMES {
         write!(w, ",{n}")?;
     }
@@ -868,7 +882,7 @@ fn export_features(data: PathBuf, out: PathBuf, stake: u64, stress: u32, win: (u
             sim.on_event(e);
         }
         for r in sim.out.drain(..) {
-            write!(w, "{},{},{}", r.time, r.slot, r.mint)?;
+            write!(w, "{},{},{},{}", r.time, r.slot, r.mint, r.tag)?;
             for x in &r.feats {
                 write!(w, ",{x:.5}")?;
             }
