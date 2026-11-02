@@ -230,3 +230,29 @@ Their edge is position in the order flow, not logic we could learn.
   profit since launch (~$12 per event), contested by co-located bots. Too small to be very profitable.
 * **Other launchpads**: per block, pump curve 18 txs, PumpSwap 51, Meteora DAMM v2 18, LaunchLab 0.8,
   Meteora DBC 1.6. LaunchLab (Bonk.fun, StonkFun) SOL-quoted volume ≈ 11,000 SOL/day, ~3% of pump.fun.
+
+## 12. Back to the videos: run mode + quick exit (candidate G, in validation)
+
+The videos' run-mode rule (operator bundle ≥ 30% of supply, ≥ 30% of its wallets fresh-funded within
+30 min, entry at first-candle close) was re-tuned with a quick-exit grid (2–45 s holds × stop × TP ×
+dump reaction, `lab signals --exit-quick / --exit-hold`) on all three periods, then frozen as G
+(`research/frozen_candidates.md`, `config/eval/G.toml`) before the gap period.
+
+* Optimum is interior: hold 8–10 s, no take-profit, no dump reaction; ≥ 12 s and dump reactions both hurt.
+* Robust to landing: stress 1 and 2 barely change results (entry is the next slot either way).
+* Live brain replay takes exactly the same trades as the signal lab (79 / 204 / 11, correlation 0.98–0.99).
+
+**Correction.** Signal-lab `net` excludes fixed costs (stored in `fixed`). Earlier G figures
+(+5.9% / +10.1% / +5.4%) omitted ~3.6 points of priority + tips at 0.25 SOL. Corrected, per attempt
+including refused buys (12%):
+
+| G (10 s, −25%) | holdout | discovery | forward |
+|---|---|---|---|
+| racing fees 0.009 SOL / round trip | +1.8% | +5.5% | +0.4% |
+| live brain replay (racing fees) | +1.0% | +5.7% | +1.6% |
+| normal fees 0.0026 SOL / round trip (fills only) | +4.9% | +9.0% | +4.4% |
+
+At racing fees G is marginal (fails "without best 2" on holdout and forward); at normal fees it is solid
+(the −15% stop variant passes "without best 2" in all three periods). Normal fees are plausible
+because G does not depend on queue position, which must be confirmed live. Pending: out-of-sample
+gap period, live recorder days, measured fills.
