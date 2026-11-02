@@ -155,6 +155,9 @@ enum Cmd {
         /// Market: 0 SOL-quoted, 1 children (pump-coin / USDC quoted), 2 both.
         #[arg(long, default_value_t = 0)]
         market: u8,
+        /// Override the probability of landing in the trigger slot (measured: 7/15).
+        #[arg(long)]
+        same_slot: Option<f64>,
     },
     Replay {
         #[arg(long)]
@@ -207,7 +210,7 @@ fn main() -> Result<()> {
         Cmd::Mechanics { data } => mechanics(data),
         Cmd::ChildCheck { data } => child_check(data),
         Cmd::Tape { data, out } => tape(data, out),
-        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long, exit_quick, exit_video, exit_hold, market } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long, exit_quick, exit_video, exit_hold), dump_sensitive, penalty, create_slip, live_real, market),
+        Cmd::Signals { data, out, stake, stress, only, exit_grid, exit_lse, dump_sensitive, penalty, create_slip, live_real, exit_long, exit_quick, exit_video, exit_hold, market, same_slot } => signals(data, out, stake, stress, only, (exit_grid, exit_lse, exit_long, exit_quick, exit_video, exit_hold), dump_sensitive, penalty, create_slip, live_real, market, same_slot),
         Cmd::Score { model, label, features, n } => {
             let g = ucore::gbm::Gbm::load(&model, &label)?;
             let txt = fs::read_to_string(features)?;
@@ -941,12 +944,15 @@ fn mayhem(data: PathBuf, out: PathBuf) -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool, bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool, market: u8) -> Result<()> {
+fn signals(data: Vec<PathBuf>, out: PathBuf, stake: u64, stress: u32, only: String, ex: (bool, bool, bool, bool, bool, bool), dump_sensitive: bool, penalty: bool, create_slip: f64, live_real: bool, market: u8, same_slot: Option<f64>) -> Result<()> {
     use ucore::siglab::SigLab;
     let (exit_grid, exit_lse, exit_long, exit_quick, exit_video, exit_hold) = ex;
     let mut lat = if penalty { LatencyModel::stressed(stress).with_measured_penalty() } else { LatencyModel::stressed(stress) };
     if live_real {
         lat = lat.with_late_sells();
+    }
+    if let Some(p) = same_slot {
+        lat.p_same_slot = p;
     }
     let mut lab = SigLab::new(stake, lat);
     lab.create_slip = create_slip;

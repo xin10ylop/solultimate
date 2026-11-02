@@ -320,3 +320,16 @@ loses 2.4–3.4% per trade (random moments: −3.6% to −5.5%): their edge is s
 life that is a median 1.7% (p90 3.8%) of the SOL in its curve: less than one round trip of fees.
 The mayhem agent trades a median ~1 SOL per coin, so mayhem volume pays holders next to nothing.
 Rejected.
+
+**Where the consistent taker money is: the creation block (Oct 16–19, development days).**
+Buys landing in the coin's creation slot but more than 8 transactions after the create (not the
+dev's own bundle) earned +1.8% / +3.3% / +4.5% / +3.0% ROI on the four days, but only because of a
+few wallets: without the top 20 wallets every day is negative, and the median such sniper loses
+1–3%. The 58 snipers profitable on Oct 16 and 17 made +7.5% on Oct 18 (72% of them profitable),
+mostly by letting the right positions run (hold ≥ 50 slots: +21%; ≤ 3 slots: −1%).
+On exactly their Oct 18 coins our own create entry loses with every one of 170 exits
+(fixed holds, TP / stop / trailing grid, dump reactions): −7% to −10% at the measured landing,
+−7% even with 100% same-slot landing, −3.5% with same-slot entries, prompt sells and default costs.
+Their edge is position at the top of the block and discretionary exits, i.e. execution, not a
+selection rule we could learn. Identity-free flow model (LightGBM, 320k decision points, 3 days,
+time split): no positive bucket out of sample (top 1%: −1.6% to −5.9%).

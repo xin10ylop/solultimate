@@ -16,7 +16,9 @@ use ucore::store::StoreReader;
 #[derive(Clone, Copy)]
 struct MintInfo {
     create_slot: u64,
+    create_tx: u32,
     dev: Pk,
+    dev_funder: Pk,
     vsol: u64,
     vtok: u64,
     holder_reward: bool,
@@ -24,6 +26,7 @@ struct MintInfo {
 
 #[derive(Default, Clone)]
 struct Pos {
+    mint: Pk,
     first_slot: u64,
     last_slot: u64,
     day: i64,
@@ -39,6 +42,10 @@ struct Pos {
     entry_cu_price: u64,
     entry_tip: u64,
     b0: bool,
+    /// create-slot buy in its own transaction by a wallet with no funding link to the dev
+    b0_third: bool,
+    /// create-slot buy more than 8 transactions after the create (not part of a contiguous bundle)
+    b0_far: bool,
     dev: bool,
     hr: bool,
 }
@@ -61,6 +68,10 @@ struct Day {
     fast_entry: u64,
     fast_exit: u64,
     hr: u64,
+    b0_third: u64,
+    b0_far: u64,
+    pnl_far: f64,
+    spent_far: f64,
 }
 
 const SLOT_S: f64 = 0.215;
@@ -75,6 +86,7 @@ fn curve_sell(vsol: u64, vtok: u64, tok: u64) -> f64 {
 }
 
 static mut TOT: (f64, f64, f64) = (0.0, 0.0, 0.0);
+static mut FAR: Option<std::io::BufWriter<std::fs::File>> = None;
 
 fn finish(p: &Pos, mark: f64, wallet: Pk, days: &mut FxHashMap<(Pk, i64), Day>, open: bool) {
     let pnl = (p.recv as f64 + mark - p.spent as f64 - p.costs as f64) / 1e9;
@@ -100,6 +112,18 @@ fn finish(p: &Pos, mark: f64, wallet: Pk, days: &mut FxHashMap<(Pk, i64), Day>, 
     d.fast_entry += (p.entry_age <= 2) as u64;
     d.fast_exit += (p.last_slot.saturating_sub(p.first_slot) <= 47) as u64;
     d.hr += p.hr as u64;
+    d.b0_third += p.b0_third as u64;
+    if p.b0_far {
+        unsafe {
+            #[allow(static_mut_refs)]
+            if let Some(w) = FAR.as_mut() {
+                let _ = writeln!(w, "{},{},{},{},{:.4},{:.4},{}", wallet.to_b58(), p.mint.to_b58(), p.day, p.first_slot, p.spent as f64 / 1e9, pnl, p.last_slot.saturating_sub(p.first_slot));
+            }
+        }
+        d.b0_far += 1;
+        d.pnl_far += pnl;
+        d.spent_far += p.spent as f64 / 1e9;
+    }
 }
 
 fn main() -> Result<()> {
@@ -110,6 +134,12 @@ fn main() -> Result<()> {
     let mut pos: FxHashMap<(Pk, Pk), Pos> = FxHashMap::default();
     let mut days: FxHashMap<(Pk, i64), Day> = FxHashMap::default();
     let mut charged: FxHashSet<Sig> = FxHashSet::default();
+    let mut funded_by: FxHashMap<Pk, Pk> = FxHashMap::default();
+    if let Ok(path) = std::env::var("FAR_OUT") {
+        let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
+        writeln!(w, "wallet,mint,day,slot,spent,pnl,hold_slots")?;
+        unsafe { FAR = Some(w) };
+    }
     let mut now_day = 0i64;
     let (mut n_tr, mut n_blk) = (0u64, 0u64);
     for d in dirs {
@@ -118,9 +148,13 @@ fn main() -> Result<()> {
             charged.clear();
             for e in &blk {
                 match e {
+                    Ev::Fund(f) => {
+                        funded_by.insert(f.to, f.from);
+                    }
                     Ev::Create(c) => {
                         if ucore::pump::is_sol_quote(&c.quote_mint) && !c.mayhem && c.depth == 0 {
-                            mints.insert(c.mint, MintInfo { create_slot: c.m.slot, dev: c.user, vsol: c.vsol, vtok: c.vtok, holder_reward: c.holder_reward });
+                            let dev_funder = funded_by.get(&c.user).copied().unwrap_or_default();
+                            mints.insert(c.mint, MintInfo { create_slot: c.m.slot, create_tx: c.m.tx_idx, dev: c.user, dev_funder, vsol: c.vsol, vtok: c.vtok, holder_reward: c.holder_reward });
                         }
                     }
                     Ev::Trade(t) => {
@@ -140,6 +174,7 @@ fn main() -> Result<()> {
                             continue; // selling tokens received outside the curve: not a position we can price
                         }
                         let p = pos.entry(key).or_insert_with(|| Pos {
+                            mint: t.mint,
                             first_slot: t.m.slot,
                             day: now_day,
                             entry_age: t.m.slot.saturating_sub(mi.create_slot),
@@ -147,6 +182,13 @@ fn main() -> Result<()> {
                             entry_cu_price: t.m.cu_price,
                             entry_tip: t.m.tip,
                             b0: t.m.slot == mi.create_slot,
+                            b0_third: t.m.slot == mi.create_slot && t.m.tx_idx != mi.create_tx && t.m.signer != mi.dev && t.user != mi.dev && {
+                                let fu = funded_by.get(&t.user).copied().unwrap_or_default();
+                                let fs = funded_by.get(&t.m.signer).copied().unwrap_or_default();
+                                let z = Pk::default();
+                                !(fu == mi.dev || fs == mi.dev || (fu != z && fu == mi.dev_funder) || (fs != z && fs == mi.dev_funder) || t.user == mi.dev_funder || t.m.signer == mi.dev_funder)
+                            },
+                            b0_far: t.m.slot == mi.create_slot && t.m.tx_idx > mi.create_tx + 8,
                             dev: t.user == mi.dev,
                             hr: mi.holder_reward,
                             ..Default::default()
@@ -191,8 +233,14 @@ fn main() -> Result<()> {
         };
         finish(&p, mark, w, &mut days, true);
     }
+    unsafe {
+        #[allow(static_mut_refs)]
+        if let Some(w) = FAR.as_mut() {
+            w.flush()?;
+        }
+    }
     let mut f = std::io::BufWriter::new(std::fs::File::create(out)?);
-    writeln!(f, "wallet,day,n,spent,pnl,wins,hold_s,age_s,b0,dev,mcap,cu_price,tip,costs,open_end,fast_entry,fast_exit,hr")?;
+    writeln!(f, "wallet,day,n,spent,pnl,wins,hold_s,age_s,b0,dev,mcap,cu_price,tip,costs,open_end,fast_entry,fast_exit,hr,b0_third,b0_far,pnl_far,spent_far")?;
     for ((w, day), d) in &days {
         if d.n < 3 {
             continue;
@@ -200,7 +248,7 @@ fn main() -> Result<()> {
         let n = d.n as f64;
         writeln!(
             f,
-            "{},{},{},{:.4},{:.4},{},{:.1},{:.1},{},{},{:.1},{:.0},{:.6},{:.5},{},{},{},{}",
+            "{},{},{},{:.4},{:.4},{},{:.1},{:.1},{},{},{:.1},{:.0},{:.6},{:.5},{},{},{},{},{},{},{:.4},{:.4}",
             w.to_b58(),
             day,
             d.n,
@@ -218,7 +266,11 @@ fn main() -> Result<()> {
             d.open_at_end,
             d.fast_entry,
             d.fast_exit,
-            d.hr
+            d.hr,
+            d.b0_third,
+            d.b0_far,
+            d.pnl_far,
+            d.spent_far
         )?;
     }
     let tot = unsafe { TOT };
