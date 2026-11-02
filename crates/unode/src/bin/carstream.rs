@@ -13,6 +13,9 @@
 //! The archive is written bottom-up, so all transactions of a slot precede its Block node.
 //! Transaction data = wire-format VersionedTransaction; metadata = zstd(protobuf TransactionStatusMeta).
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use futures::StreamExt;
@@ -90,7 +93,7 @@ struct Args {
     #[arg(long)]
     slim: bool,
     /// zstd level of the written segments.
-    #[arg(long, default_value_t = 15)]
+    #[arg(long, default_value_t = 9)]
     level: i32,
     /// Continue from <out>/resume.txt if present.
     #[arg(long)]
@@ -393,11 +396,11 @@ fn frame(c: &C) -> Option<Frame> {
 }
 
 /// Reassemble a possibly split frame from the frames seen so far. None if a piece is missing.
-fn assemble(first: &Frame, frames: &FxHashMap<Vec<u8>, Frame>) -> Option<Vec<u8>> {
+fn assemble(first: Frame, frames: &FxHashMap<Vec<u8>, Frame>) -> Option<Vec<u8>> {
     if first.next.is_empty() {
-        return Some(first.data.clone());
+        return Some(first.data);
     }
-    let mut parts: Vec<(u64, &[u8])> = vec![(first.index, &first.data)];
+    let mut parts: Vec<(u64, &[u8])> = vec![(first.index, &first.data[..])];
     let mut seen: Vec<&[u8]> = Vec::new();
     let mut stack: Vec<&[u8]> = first.next.iter().map(|v| v.as_slice()).collect();
     while let Some(cid) = stack.pop() {
@@ -469,6 +472,17 @@ struct Stats {
 struct Conv {
     pk_cache: FxHashMap<String, Pk>,
     zd: zstd::bulk::Decompressor<'static>,
+    buf: Vec<u8>,
+}
+
+fn keys_have_pump(keys: &[Pk], m: &Result<SlimMeta, prost::DecodeError>) -> bool {
+    if keys.contains(&pump::PUMP_PROGRAM) {
+        return true;
+    }
+    match m {
+        Ok(m) => m.loaded_writable_addresses.iter().chain(m.loaded_readonly_addresses.iter()).any(|k| k[..] == pump::PUMP_PROGRAM.0[..]),
+        Err(_) => false,
+    }
 }
 
 impl Conv {
@@ -582,11 +596,34 @@ impl Conv {
             st.votes += 1;
             return None;
         }
-        let meta_bytes = match zstd::zstd_safe::get_frame_content_size(&t.meta) {
-            Ok(Some(n)) if n < (64 << 20) => self.zd.decompress(&t.meta, n as usize).unwrap_or_else(|_| zstd::stream::decode_all(&t.meta[..]).unwrap_or_default()),
-            _ => zstd::stream::decode_all(&t.meta[..]).unwrap_or_else(|_| t.meta.clone()),
+        // reusable context + buffer (a fresh zstd context per transaction dominated the profile)
+        let mut mb = std::mem::take(&mut self.buf);
+        mb.clear();
+        let mut ok = false;
+        for cap in [1usize << 16, 1 << 20, 1 << 24, 1 << 27] {
+            if mb.capacity() < cap {
+                mb.reserve(cap - mb.len());
+            }
+            mb.clear();
+            if self.zd.decompress_to_buffer(&t.meta[..], &mut mb).is_ok() {
+                ok = true;
+                break;
+            }
+        }
+        if !ok {
+            // not compressed (or corrupt): try the raw bytes
+            mb.clear();
+            mb.extend_from_slice(&t.meta);
+        }
+        let meta_bytes = mb;
+        let decoded = SlimMeta::decode(&meta_bytes[..]);
+        let logs = if decoded.as_ref().map(|m| m.err.is_none()).unwrap_or(false) && keys_have_pump(&keys, &decoded) {
+            LogsOnly::decode(&meta_bytes[..]).map(|l| l.log_messages).unwrap_or_default()
+        } else {
+            Vec::new()
         };
-        let Ok(meta) = SlimMeta::decode(&meta_bytes[..]) else {
+        self.buf = meta_bytes;
+        let Ok(meta) = decoded else {
             st.meta_err += 1;
             return None;
         };
@@ -633,7 +670,7 @@ impl Conv {
             keys,
             ixs,
             inner,
-            logs: if pump_touched && meta.err.is_none() { LogsOnly::decode(&meta_bytes[..]).map(|l| l.log_messages).unwrap_or_default() } else { Vec::new() },
+            logs: if pump_touched { logs } else { Vec::new() },
             failed: meta.err.is_some(),
             fee: meta.fee,
             pre_bal: meta.pre_balances,
@@ -752,7 +789,7 @@ fn main() -> Result<()> {
                     let n_tx = list.len() as u32;
                     let mut txs = Vec::with_capacity(list.len());
                     for (i, (idx, d, m)) in list.into_iter().enumerate() {
-                        let (Some(data), Some(meta)) = (assemble(&d, &frames), assemble(&m, &frames)) else {
+                        let (Some(data), Some(meta)) = (assemble(d, &frames), assemble(m, &frames)) else {
                             tracing::warn!("slot {slot}: missing data frames");
                             continue;
                         };
@@ -782,7 +819,7 @@ fn main() -> Result<()> {
         let brx = brx.clone();
         let rtx = rtx.clone();
         workers.push(std::thread::spawn(move || {
-            let mut conv = Conv { pk_cache: FxHashMap::default(), zd: zstd::bulk::Decompressor::new().unwrap() };
+            let mut conv = Conv { pk_cache: FxHashMap::default(), zd: zstd::bulk::Decompressor::new().unwrap(), buf: Vec::new() };
             loop {
                 let msg = { brx.lock().unwrap().recv() };
                 let Ok((seq, mut b)) = msg else { break };
