@@ -87,3 +87,29 @@ forward +15.2% (5); normal: +6.2% / +12.7% / +17.8%.
 
 Pass rule for the gap period and each new day: mean > 0 at racing fees, without-best-2 > 0 at
 normal fees, ≥ 10 trades per day.
+
+## Archive test of G and G2 (pre-registered 2026-11-02 01:10 UTC, before any archived day was replayed)
+
+No parameter of G or G2 changes. Configs: `config/eval/G.toml`, `config/eval/G2.toml` (as committed in
+cfe8fcf / 51d1d42).
+
+* **Data**: the Solana ledger archive (Old Faithful, `files.old-faithful.net`), epochs 1058–1071 and
+  epoch 1072 up to slot 463,424,017 (≈ Oct 16 → Oct 30 20:45 UTC). None of it was ever looked at.
+  Imported with `carstream` (same `TxView` → `decode_tx` path as the RPC backfill). Parity checked on
+  1,500 slots of epoch 1073 against the RPC-recorded pilot2 data: blocks, creates, fundings and
+  token transfers identical; trades identical except the quote fields of non-SOL-quoted coins
+  (zeroed by the older pilot2 decoder; G/G2 never trade those). `--slim` drops the signatures of
+  funding / transfer events, which the brain never reads.
+* **Replay**: one continuous `lab replay --lse --live-costs --late-sells` from the first archived
+  slot through the end of the existing data, operator book carried across days.
+  The first imported epoch (1058) is warm-up and not scored.
+* **Day** = UTC calendar day of the decision slot. Only complete days inside the archive are
+  scored (Oct 17 … Oct 29 if all epochs import; whatever completes otherwise).
+* **Costs**: racing fees (measured live: 3.5M lamports priority + 0.001 SOL tip per leg, refused buys
+  charged) and normal fees (0.0026 SOL per round trip), stake 0.25 SOL.
+* **Pass (go to canary)**, G2: ≥ 14 scored days in total (archive days + the already recorded
+  out-of-sample days count; in-sample holdout/discovery do not), ≥ 70% of days profitable at racing
+  fees, overall mean > 0 at racing fees, and overall mean without the best 2 trades > 0.
+  Also reported: per-day mean, trades/day, worst day, longest losing streak, max drawdown in SOL.
+* **Fail**: anything else. G2 is then rejected as a strategy in its current form, and the
+  next step is not re-tuning on these days (that would turn them in-sample).

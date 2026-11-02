@@ -14,6 +14,7 @@ pub struct StoreWriter {
     cur: Option<(u64, zstd::stream::write::Encoder<'static, BufWriter<File>>)>,
     frames_since_flush: u32,
     last_slot: u64,
+    level: i32,
 }
 
 impl StoreWriter {
@@ -25,7 +26,15 @@ impl StoreWriter {
             cur: None,
             frames_since_flush: 0,
             last_slot: 0,
+            level: 6,
         })
+    }
+
+    /// Same, with a custom zstd level (archival imports use a higher one).
+    pub fn with_level(dir: impl AsRef<Path>, rotate_slots: u64, level: i32) -> Result<Self> {
+        let mut w = Self::new(dir, rotate_slots)?;
+        w.level = level;
+        Ok(w)
     }
 
     fn open(&mut self, slot: u64) -> Result<()> {
@@ -37,7 +46,7 @@ impl StoreWriter {
             n += 1;
         }
         let f = BufWriter::with_capacity(1 << 20, File::create(&path)?);
-        let enc = zstd::stream::write::Encoder::new(f, 6)?;
+        let enc = zstd::stream::write::Encoder::new(f, self.level)?;
         self.cur = Some((slot, enc));
         Ok(())
     }

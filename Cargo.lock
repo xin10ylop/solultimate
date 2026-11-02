@@ -2499,6 +2499,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "futures",
+ "prost",
  "reqwest",
  "rustc-hash",
  "serde",
@@ -2511,6 +2512,7 @@ dependencies = [
  "ucore",
  "yellowstone-grpc-client",
  "yellowstone-grpc-proto",
+ "zstd 0.13.3",
 ]
 
 [[package]]

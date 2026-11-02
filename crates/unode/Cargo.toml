@@ -16,6 +16,8 @@ serde_json.workspace = true
 bs58.workspace = true
 base64.workspace = true
 rustc-hash.workspace = true
+zstd.workspace = true
+prost = "0.14"
 toml.workspace = true
 ed25519-dalek.workspace = true
 tokio = { version = "1", features = ["full"] }
@@ -34,4 +36,8 @@ required-features = ["grpc"]
 
 [[bin]]
 name = "trader"
+required-features = ["grpc"]
+
+[[bin]]
+name = "carstream"
 required-features = ["grpc"]
