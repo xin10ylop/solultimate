@@ -113,3 +113,13 @@ cfe8fcf / 51d1d42).
   Also reported: per-day mean, trades/day, worst day, longest losing streak, max drawdown in SOL.
 * **Fail**: anything else. G2 is then rejected as a strategy in its current form, and the
   next step is not re-tuning on these days (that would turn them in-sample).
+
+### Research protocol for anything after G2 (fixed 2026-11-02 ~02:40 UTC, before any archive day beyond Oct 30 14:30–20:45 UTC was replayed)
+
+* **Development** = archive epochs 1058–1064 (≈ Oct 15 → Oct 23). New ideas are designed and tuned
+  only here (and on the old in-sample holdout/discovery days).
+* **Validation** = archive epochs 1065–1072 (≈ Oct 23 → Oct 30 20:45). Touched once per frozen candidate.
+* **Final test** = everything recorded after Oct 30 20:45 that the candidate was not tuned on
+  (forward, gap, live) plus every new day the recorder adds.
+* Only G / G2 aggregates (per day) are looked at on validation days; their trade-level details are
+  studied on development days only.

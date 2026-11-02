@@ -170,3 +170,24 @@ Judge it per UTC day with `research/follow_money/score_periods.py` on the trader
 replay of the recorded day (`lab replay --config config/eval/G2.toml --lse --live-costs --late-sells`).
 Go to canary (0.1 SOL, 1 open position) only after ≥ 14 days with ≥ 70% of days profitable at
 racing fees and positive without the best 2 trades.
+
+## Historical days without a box: the ledger archive
+
+Every past epoch (432,000 slots ≈ 26 h) is published as one CAR file at
+`https://files.old-faithful.net/<epoch>/epoch-<epoch>.car` (300–650 GB). `carstream` streams one over
+parallel HTTP range requests and decodes it with the same `decode_tx` as the recorder, so the output
+is an ordinary event store for `lab replay` / `lab signals`.
+
+```bash
+cargo build --release --features grpc --bin carstream --bin evdiff
+./target/release/carstream --epoch 1071 --out data/hist/e1071 --slim --resume --conns 48 --chunk-mb 16
+deploy/hist_loop.sh "1072 1071 1070"          # several epochs, newest first, resumable
+./target/release/evdiff data/hist/e1073 data/pilot2 463536000 463537500   # parity vs RPC data
+```
+
+* ~180 MB/s on 4 cores (CPU-bound; two loops on disjoint epochs reach ~250 MB/s), ~1 GB of
+  events per epoch with `--slim` (funding / transfer signatures dropped; the brain never reads them).
+* Handles the v1 transaction layout (version byte 0x81, signatures last) and split data frames.
+  There are no vote transactions in recent epochs.
+* `research/archive/run_replay.sh` replays G / G2 over the contiguous imported epochs plus all
+  recorded data and scores each UTC day (`research/archive/score_days.py`).
