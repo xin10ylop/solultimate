@@ -64,6 +64,9 @@ pub struct StructureCfg {
     /// freshly funded (within `b0_window_s` before launch) by the create-slot buyers' / dev's
     /// non-hub funders did NOT buy in the create slot (0 = off).
     pub b0_min_idle: usize,
+    /// First-candle run mode only for operators with at least this many earlier launches
+    /// (0 = off). Prolific known operators run repeatable plays; one-off known operators dump.
+    pub b0_min_op_prior: u32,
 }
 
 impl Default for StructureCfg {
@@ -104,6 +107,7 @@ impl Default for StructureCfg {
             b0_max_mcap_sol: 0.0,
             exit_dump: 0,
             b0_min_idle: 0,
+            b0_min_op_prior: 0,
         }
     }
 }
@@ -174,7 +178,8 @@ pub fn at_b0(mt: &MintTracker, book: &OperatorBook, c: &StructureCfg) -> Option<
     let known_ok = !c.b0_known_op || mt.ctx.how != 0;
     let mcap_ok = c.b0_max_mcap_sol <= 0.0 || mt.mcap_sol() <= c.b0_max_mcap_sol;
     let idle_ok = c.b0_min_idle == 0 || idle_team(mt, book, c.b0_window_s) >= c.b0_min_idle;
-    if c.b0_runmode && known_ok && mcap_ok && idle_ok && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
+    let prolific_ok = c.b0_min_op_prior == 0 || mt.ctx.op_created_before >= c.b0_min_op_prior;
+    if c.b0_runmode && known_ok && mcap_ok && idle_ok && prolific_ok && runmode(mt, book, c.b0_supply, c.b0_fresh, c.b0_window_s, c.b0_min_n) {
         return Some("rm_b0");
     }
     let n = mt.block0.len();

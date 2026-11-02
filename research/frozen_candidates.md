@@ -173,3 +173,17 @@ Continuous replay, live costs, per UTC day. None pass (0/4 profitable days each)
 | **G2i** | **idle-team ≥ 1 only** | 36 | **−5.0%** | **42%** | −1.8 SOL |
 
 The idle-team rule is the one that carries real signal (G2i: win rate 31%→42%, loss per trade more than halved), confirming copy3's "all team wallets buying at once = the bundle that dumps" observation transfers to pump.fun. But it is not enough: still negative every day. The pause/cool-off/exit rules only cut volume. Rejected as strategies; the idle-team feature is kept.
+
+## G4 (frozen 2026-11-02 16:00 UTC): G2i + prolific-operator filter
+
+Developed on dev days Oct 18–21 only. Within the G2i-qualifying launches, the one entry feature that
+separated the +16% time-stop winners from the −54% stop-loss losers was the operator's track record:
+winners' operators had a median 46 prior launches, losers 12. G4 = G2i + `b0_min_op_prior = 20`
+(operator must have ≥ 20 earlier launches). `config/eval/G4.toml`.
+
+Dev-day result: +1.9%/trade, 58% win, 74 trades — the first positive expectancy in the family.
+Caveat recorded before the validation test: the mean leans on Oct 21 (9 trades, +27%); Oct 19 was
+−4.5%, Oct 20 ~flat. The win-rate lift (42%→58%) is broad; the mean may be tail-driven.
+
+**Validation (Oct 24–29, never touched): [pending this run].** Pass = mean > 0 at racing fees and
+≥ 50% of days positive. If it fails, G4 is overfit to Oct 21 and rejected.
