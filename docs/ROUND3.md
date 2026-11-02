@@ -402,3 +402,26 @@ The edges that exist are structural + latency (copy3's snipe-tax race; atomic ar
 winning an infrastructure race on a venue whose mechanic thins the field — not by a rule we can
 backtest into profit. That is the honest answer to "find something safe, consistent and very
 profitable" on Solana launches: it is not there in the form sought, and the public record says so too.
+
+## 16. Can atomic arbitrage work for us? Direct test (2026-11-02)
+
+The one profitable category (MEV/atomic arb) is a latency race; the only way in for a non-co-located
+player is *non-race* opportunities — price gaps that persist across blocks. Tested directly on the one
+class visible in our data: same token, two SOL-quoted PumpSwap pools, from 16 h of `--amm` live data.
+
+1. **Persistent gaps exist.** 35 tokens had ≥ 2 live SOL pools; cross-pool price gaps had a median of
+   1.25% and several held 4–20% over many slots — i.e. not instantly arbed.
+2. **But they are not capturable.** Simulating the actual two-legged trade (buy the cheap pool, sell
+   the expensive pool) on the real reserves, with PumpSwap's 0.25%/side fee and gas, over ~1,600–2,600
+   opportunities at every liquidity threshold: **0.0% win rate, large net loss** (e.g. −106 SOL / 1,591
+   attempts ≈ −13%/attempt at 0.5 SOL size). The "gap" is a measurement artifact of the pools' **phantom
+   (virtual) quote reserves**: the executable price with impact is far worse than Q/B implies, and the
+   round-trip fee exceeds the real dislocation every time. The persistent gaps are stale/thin-pool
+   artifacts; when both pools are genuinely live and funded, there is no gap at all (0 opportunities at
+   ≥ 2 SOL real reserve, both traded within 30 s).
+
+So even with **zero competition**, same-token cross-pool arb on these memecoins is structurally
+negative. General SOL/USDC-pair arb (where MEV actually lives) is not in our pump-centric data, and the
+best independent build modelling tips+fees reported a NO-GO. Conclusion: atomic arb does not work in any
+form reachable from analysis or from this dataset — the barrier is not just latency, it is that the
+accessible gaps are not real after phantom reserves, fees and impact. Confirms § 15.
